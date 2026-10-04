@@ -35,6 +35,19 @@ class ContributionStatus {
   static const pending = 'pending';
 }
 
+/// Who bears the organizer's commission in a chit auction.
+class CommissionMode {
+  /// Commission comes out of the dividend; the winner gets the full winning amount.
+  static const fromDividend = 'from_dividend';
+
+  /// Whole discount is the dividend; commission is deducted from the winner's prize.
+  static const fromWinner = 'from_winner';
+  static const all = [fromWinner, fromDividend];
+
+  static String label(String mode) =>
+      mode == fromWinner ? 'Paid by winner' : 'Deducted from dividend';
+}
+
 class Borrower {
   const Borrower({
     this.id,
@@ -232,6 +245,7 @@ class ChitGroup {
     required this.numberOfMembers,
     required this.durationMonths,
     required this.commissionPercent,
+    required this.commissionMode,
     required this.startDate,
     required this.status,
     required this.createdAt,
@@ -244,6 +258,7 @@ class ChitGroup {
   final int numberOfMembers;
   final int durationMonths;
   final double commissionPercent;
+  final String commissionMode;
   final String startDate;
   final String status;
   final String createdAt;
@@ -256,6 +271,7 @@ class ChitGroup {
         numberOfMembers: _i(m['number_of_members']),
         durationMonths: _i(m['duration_months']),
         commissionPercent: _d(m['commission_percent']),
+        commissionMode: m['commission_mode'] as String? ?? CommissionMode.fromDividend,
         startDate: m['start_date'] as String? ?? '',
         status: m['status'] as String? ?? RecordStatus.active,
         createdAt: m['created_at'] as String? ?? '',
@@ -305,6 +321,7 @@ class ChitAuction {
     required this.commissionAmount,
     required this.dividendPool,
     required this.dividendPerMember,
+    required this.winnerPayout,
     required this.createdAt,
     this.winnerName,
   });
@@ -319,6 +336,9 @@ class ChitAuction {
   final double commissionAmount;
   final double dividendPool;
   final double dividendPerMember;
+
+  /// What the winner actually receives (winning amount, minus commission in from_winner mode).
+  final double winnerPayout;
   final String createdAt;
   final String? winnerName;
 
@@ -333,6 +353,7 @@ class ChitAuction {
         commissionAmount: _d(m['commission_amount']),
         dividendPool: _d(m['dividend_pool']),
         dividendPerMember: _d(m['dividend_per_member']),
+        winnerPayout: _d(m['winner_payout'] ?? m['winning_amount']),
         createdAt: m['created_at'] as String? ?? '',
         winnerName: m['winner_name'] as String?,
       );

@@ -69,6 +69,8 @@ class BackupService {
   }
 
   /// Replaces all business data with the snapshot, atomically.
+  /// Older snapshots are accepted: columns they lack take the schema defaults
+  /// (v1 chits become 'from_dividend', v1 auctions get winner_payout = winning_amount).
   Future<void> restoreSnapshot(Map<String, dynamic> data) async {
     if (data['app'] != appTag || data['tables'] is! Map) {
       throw const ValidationException('That file is not a Loan & Chit Manager backup');
@@ -90,6 +92,7 @@ class BackupService {
           await txn.insert(t, Map<String, Object?>.from(r as Map));
         }
       }
+      await AppDatabase.backfillWinnerPayout(txn);
       await AppDatabase.createGuards(txn);
     });
   }

@@ -23,6 +23,7 @@ class _ChitFormScreenState extends State<ChitFormScreen> {
   late final _months = TextEditingController(text: widget.chit?.durationMonths.toString());
   late final _commission =
       TextEditingController(text: (widget.chit?.commissionPercent ?? 5).toString());
+  late String _commissionMode = widget.chit?.commissionMode ?? CommissionMode.fromWinner;
   late String _startDate = widget.chit?.startDate ?? todayKey();
   bool _saving = false;
 
@@ -51,6 +52,7 @@ class _ChitFormScreenState extends State<ChitFormScreen> {
           members: members,
           durationMonths: months,
           commissionPercent: commission,
+          commissionMode: _commissionMode,
           startDate: _startDate,
         );
       } else {
@@ -61,6 +63,7 @@ class _ChitFormScreenState extends State<ChitFormScreen> {
           members: members,
           durationMonths: months,
           commissionPercent: commission,
+          commissionMode: _commissionMode,
           startDate: _startDate,
         );
         id = existing.id!;
@@ -111,6 +114,11 @@ class _ChitFormScreenState extends State<ChitFormScreen> {
                 if (n < 0 || n > 100) return 'Between 0 and 100';
                 return null;
               },
+            ),
+            const SizedBox(height: 14),
+            CommissionModeSelector(
+              value: _commissionMode,
+              onChanged: (v) => setState(() => _commissionMode = v),
             ),
             const SizedBox(height: 14),
             DateField(

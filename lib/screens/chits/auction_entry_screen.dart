@@ -79,6 +79,7 @@ class _AuctionEntryScreenState extends State<AuctionEntryScreen> {
         members: chit.numberOfMembers,
         winningAmount: w,
         commissionPercent: chit.commissionPercent,
+        commissionMode: chit.commissionMode,
       );
       setState(() {
         _preview = c;
@@ -101,7 +102,7 @@ class _AuctionEntryScreenState extends State<AuctionEntryScreen> {
     final winner = _eligible.firstWhere((m) => m.id == _winnerId);
     final ok = await confirmAction(context,
         title: 'Save month $_month auction?',
-        message: '${winner.memberName} takes ${money(parseAmount(_winning.text) ?? 0)}. '
+        message: '${winner.memberName} receives ${money(_preview?.winnerPayout ?? 0)}. '
             'They cannot win again in this chit, and this month is locked once saved.',
         confirmLabel: 'Save auction');
     if (!ok) return;
@@ -140,6 +141,7 @@ class _AuctionEntryScreenState extends State<AuctionEntryScreen> {
           children: [
             InfoRow('Chit value', chit.chitValue == null ? 'Not set' : money(chit.chitValue!)),
             InfoRow('Commission', '${chit.commissionPercent}%'),
+            InfoRow('Commission paid by', CommissionMode.label(chit.commissionMode)),
             const SizedBox(height: 12),
             DropdownButtonFormField<int>(
               // ignore: deprecated_member_use
@@ -169,7 +171,7 @@ class _AuctionEntryScreenState extends State<AuctionEntryScreen> {
             const SizedBox(height: 14),
             AmountField(
               controller: _winning,
-              label: 'Winning amount (what the winner takes home)',
+              label: 'Winning amount (auctioned price the winner accepted)',
               onChanged: (_) => _recalc(),
             ),
             const SizedBox(height: 14),
@@ -185,14 +187,7 @@ class _AuctionEntryScreenState extends State<AuctionEntryScreen> {
                             color: _previewError == null
                                 ? null
                                 : Theme.of(context).colorScheme.error))
-                    : Column(children: [
-                        InfoRow('Discount', money(p.discount)),
-                        InfoRow('Commission', money(p.commission)),
-                        InfoRow('Dividend pool', money(p.dividendPool)),
-                        InfoRow('Dividend per member', money(p.dividendPerMember), emphasize: true),
-                        InfoRow('Each member pays this month', money(p.effectiveContribution),
-                            emphasize: true),
-                      ]),
+                    : ChitSplitDetails(p),
               ),
             ),
             const SizedBox(height: 20),

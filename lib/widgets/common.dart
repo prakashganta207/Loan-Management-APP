@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import '../core/errors.dart';
 import '../core/format.dart';
 import '../core/theme.dart';
+import '../models/models.dart';
+import '../services/chit_calculator.dart';
 import '../services/upi_service.dart';
 
 String errorText(Object e) => e is ValidationException ? e.message : 'Error: $e';
@@ -326,6 +328,67 @@ class InfoRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// "Commission paid by: Winner / Members" toggle (chit form and calculator).
+class CommissionModeSelector extends StatelessWidget {
+  const CommissionModeSelector({super.key, required this.value, this.onChanged});
+  final String value;
+  final ValueChanged<String>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Commission paid by', style: theme.textTheme.bodyMedium),
+        const SizedBox(height: 6),
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: CommissionMode.fromWinner, label: Text('Winner')),
+            ButtonSegment(value: CommissionMode.fromDividend, label: Text('Members')),
+          ],
+          selected: {value},
+          onSelectionChanged:
+              onChanged == null ? null : (s) => onChanged!(s.first),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value == CommissionMode.fromWinner
+              ? 'Members pay auctioned price ÷ members; commission is deducted from the winner.'
+              : 'Commission is deducted from the dividend; the winner gets the full amount.',
+          style: theme.textTheme.bodySmall,
+        ),
+      ],
+    );
+  }
+}
+
+/// The auction split from [ChitCalculator], shown the same way everywhere.
+class ChitSplitDetails extends StatelessWidget {
+  const ChitSplitDetails(this.calc, {super.key, this.showBase = false});
+  final ChitCalculation calc;
+  final bool showBase;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      InfoRow('Commission paid by', CommissionMode.label(calc.commissionMode)),
+      InfoRow('Discount', money(calc.discount)),
+      InfoRow('Commission', money(calc.commission)),
+      InfoRow('Dividend pool', money(calc.dividendPool)),
+      InfoRow('Dividend per member', money(calc.dividendPerMember)),
+      InfoRow('Winner receives', money(calc.winnerPayout), emphasize: true),
+      const Divider(),
+      if (showBase) InfoRow('Contribution before dividend', money(calc.baseContribution)),
+      InfoRow('Each member pays', money(calc.effectiveContribution), emphasize: true),
+      Align(
+        alignment: Alignment.centerRight,
+        child: Text(calc.memberPaymentFormula, style: Theme.of(context).textTheme.bodySmall),
+      ),
+    ]);
   }
 }
 

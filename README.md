@@ -56,7 +56,7 @@ If the Android build complains about `minSdk`, set `minSdk = 23` in
 ```
 lib/
   core/        formatting, dates, theme, routes, ValidationException
-  data/        database.dart — schema v1, indexes, append-only ledger triggers
+  data/        database.dart — schema v2 (+ v1→v2 migration), indexes, append-only ledger triggers
   models/      plain data classes for every table
   services/    all business rules (screens never write SQL)
     loan_service.dart      ledger, multi-day split, fines, status transitions
@@ -84,7 +84,13 @@ tool/          setup_android.dart
   `(chit, month)` constraint on auctions.
 - **"Today's collection"** is keyed on when money was recorded (`created_at`), not the
   schedule day it covers, so borrowers who are behind still show up correctly.
-- **Chit terms lock** (value, members, commission) after the first auction.
+- **Two chit commission modes** (chosen per chit, `ChitCalculator` is the only place the maths lives):
+  - *Winner pays* (`from_winner`, default for new chits): the whole discount is shared, each
+    member pays winning amount ÷ members, and the winner receives winning amount − commission.
+  - *Members pay* (`from_dividend`): commission comes out of the discount first, each member
+    pays chit value ÷ members − dividend, and the winner receives the full winning amount.
+  Chits created before schema v2 stay on `from_dividend` so recorded auctions remain correct.
+- **Chit terms lock** (value, members, commission %, commission mode) after the first auction.
 
 ## Deliberate simplifications
 

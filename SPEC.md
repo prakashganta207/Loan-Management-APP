@@ -2,6 +2,8 @@
 
 This freezes the database schema and screen-by-screen UX before implementation, per the blueprint's recommendation. Any schema change after this point should be made via a migration, not a silent edit.
 
+**Current schema version: 2.** v1 → v2 added `chit_groups.commission_mode` and `chit_auctions.winner_payout` (see §1a).
+
 ---
 
 ## 1. Database Schema (SQLite via sqflite)
@@ -71,6 +73,7 @@ A ₹900 payment against a ₹300/day loan creates **three** `loan_payments` row
 | number_of_members | INTEGER NOT NULL | |
 | duration_months | INTEGER NOT NULL | |
 | commission_percent | REAL NOT NULL DEFAULT 0 | |
+| commission_mode | TEXT NOT NULL DEFAULT 'from_dividend' | v2. 'from_dividend' \| 'from_winner' (CHECK). New chits default to 'from_winner' in the app; the DB default keeps pre-v2 chits on their original maths. Locked after the first auction. |
 | start_date | TEXT NOT NULL | |
 | status | TEXT | 'active' \| 'completed' \| 'archived' |
 | created_at | TEXT | |
@@ -98,11 +101,32 @@ A ₹900 payment against a ₹300/day loan creates **three** `loan_payments` row
 | winning_amount | REAL NOT NULL | organizer enters this, not the discount |
 | discount | REAL | = chit_value - winning_amount |
 | commission_amount | REAL | = chit_value * commission_percent / 100 |
-| dividend_pool | REAL | = discount - commission_amount |
+| dividend_pool | REAL | from_dividend: = discount - commission_amount; from_winner: = discount |
 | dividend_per_member | REAL | = dividend_pool / number_of_members |
+| winner_payout | REAL NULL | v2. What the winner receives: from_dividend = winning_amount; from_winner = winning_amount - commission_amount. Backfilled to winning_amount for pre-v2 rows. |
 | created_at | TEXT | |
 
 One row per `(chit_group_id, month_number)`, unique constraint.
+
+### 1a. Auction maths (commission modes)
+`winning_amount` is the auctioned price the winner accepted. Always: `discount = chit_value - winning_amount`, `commission = chit_value × commission_percent / 100`, `base = chit_value / number_of_members`. All values rounded to 2 decimals; `ChitCalculator` is the only place this is computed.
+
+| | from_dividend (members bear commission) | from_winner (winner bears commission) |
+|---|---|---|
+| dividend_pool | discount − commission | discount |
+| dividend_per_member | pool / members | pool / members |
+| each member pays | base − dividend_per_member (= (winning_amount + commission) / members) | winning_amount / members |
+| winner receives | winning_amount | winning_amount − commission |
+| rejected when | discount < commission | winner receives ≤ 0 |
+
+Example — value 100000, 20 members, won at 80000, 5% commission:
+from_dividend → dividend/member 750, each pays 4250, winner gets 80000, commission 5000;
+from_winner → dividend/member 1000, each pays 4000, winner gets 75000, commission 5000.
+With 0% commission both modes give the same split.
+
+### Schema migrations
+- **v1 → v2:** `ALTER TABLE chit_groups ADD COLUMN commission_mode TEXT NOT NULL DEFAULT 'from_dividend' CHECK (...)`; `ALTER TABLE chit_auctions ADD COLUMN winner_payout REAL`; backfill `winner_payout = winning_amount`. Fresh installs create the v1 tables and then run the same migration, so new and upgraded databases are identical.
+- Backups record `schema_version`. Restore accepts v1 and v2 backups (missing columns take the defaults above) and rejects anything newer than the app's schema.
 
 ### chit_contributions
 | column | type | notes |
@@ -186,7 +210,7 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 - Filter by status, list shows chit name, value, members, current month/duration.
 
 ### Create Chit
-- Fields: Chit name, Chit value (optional), Number of members, Duration (months), Commission %, Start date.
+- Fields: Chit name, Chit value (optional), Number of members, Duration (months), Commission %, Commission paid by (Winner — members pay auctioned price ÷ members / Members — deducted from dividend; defaults to Winner), Start date.
 
 ### Chit Details
 - Summary: value, members count, current month, total commission earned, total dividends paid.
@@ -197,18 +221,18 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 
 ### Auction Entry
 - Select month, select winner (excludes members with has_won=1), enter winning amount.
-- Live-calculated preview: Discount, Commission, Dividend Pool, Dividend/Member before save.
+- Live-calculated preview: commission mode, Discount, Commission, Dividend Pool, Dividend/Member, Winner receives, Each member pays with a one-line formula (e.g. "₹80,000 ÷ 20 = ₹4,000") before save.
 - On save: marks winner has_won=1, locks the month's auction row.
 
 ### Contribution Tracking
 - Grid/list per month: member name, amount, paid/pending toggle, payment date.
 
 ### Auction History
-- List of past auctions per chit: month, winner, winning amount, dividend/member.
+- List of past auctions per chit: month, winner, winning amount, winner payout, dividend/member, commission.
 
 ### Chit Calculator (standalone, no persistence)
-- Inputs: Chit value, Number of members, Winning amount, Commission %.
-- Outputs (live): Discount, Commission, Dividend Pool, Dividend/Member, Effective contribution per member.
+- Inputs: Chit value, Number of members, Winning amount, Commission %, Commission paid by (same toggle as Create Chit).
+- Outputs (live): Discount, Commission, Dividend Pool, Dividend/Member, Winner receives, Effective contribution per member with its formula.
 
 ### Reports
 - Daily: today's collected vs expected, list of today's transactions.

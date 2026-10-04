@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/format.dart';
+import '../../models/models.dart';
 import '../../services/chit_calculator.dart';
 import '../../widgets/common.dart';
 
@@ -17,6 +18,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   final _members = TextEditingController();
   final _winning = TextEditingController();
   final _commission = TextEditingController(text: '5');
+  String _mode = CommissionMode.fromWinner;
 
   @override
   void dispose() {
@@ -38,7 +40,8 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
             chitValue: value,
             members: members,
             winningAmount: winning,
-            commissionPercent: commission),
+            commissionPercent: commission,
+            commissionMode: _mode),
         null
       );
     } catch (e) {
@@ -61,7 +64,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
           const SizedBox(height: 14),
           AmountField(
               controller: _winning,
-              label: 'Winning amount (taken by winner)',
+              label: 'Winning amount (auctioned price)',
               onChanged: changed),
           const SizedBox(height: 14),
           TextField(
@@ -70,6 +73,8 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
             decoration: const InputDecoration(labelText: 'Commission', suffixText: '%'),
             onChanged: changed,
           ),
+          const SizedBox(height: 14),
+          CommissionModeSelector(value: _mode, onChanged: (v) => setState(() => _mode = v)),
           const SizedBox(height: 20),
           Card(
             child: Padding(
@@ -78,22 +83,18 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
                   ? Text(error ?? 'Fill in all four fields to see the split.',
                       style: TextStyle(
                           color: error == null ? null : Theme.of(context).colorScheme.error))
-                  : Column(children: [
-                      InfoRow('Discount', money(calc.discount)),
-                      InfoRow('Commission', money(calc.commission)),
-                      InfoRow('Dividend pool', money(calc.dividendPool)),
-                      InfoRow('Dividend per member', money(calc.dividendPerMember)),
-                      const Divider(),
-                      InfoRow('Contribution before dividend', money(calc.baseContribution)),
-                      InfoRow('Each member pays', money(calc.effectiveContribution),
-                          emphasize: true),
-                    ]),
+                  : ChitSplitDetails(calc, showBase: true),
             ),
           ),
           const SizedBox(height: 12),
           Text(
-            'Discount = value − winning amount. Commission = value × %. '
-            'Dividend pool = discount − commission, shared equally by all members.',
+            _mode == CommissionMode.fromWinner
+                ? 'Discount = value − winning amount. Commission = value × %. '
+                    'Whole discount is shared by all members, so each pays winning amount ÷ '
+                    'members. Winner receives winning amount − commission.'
+                : 'Discount = value − winning amount. Commission = value × %. '
+                    'Dividend pool = discount − commission, shared equally by all members. '
+                    'Winner receives the full winning amount.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],

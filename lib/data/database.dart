@@ -9,7 +9,8 @@ class AppDatabase {
 
   static DatabaseFactory? factoryOverride;
   static String? pathOverride;
-  static const int schemaVersion = 1;
+  /// v1: initial schema. v2: chit commission_mode + auction winner_payout.
+  static const int schemaVersion = 2;
 
   Database? _db;
 
@@ -25,7 +26,7 @@ class AppDatabase {
         version: schemaVersion,
         onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: _onCreate,
-        // Future schema changes: add onUpgrade migrations here, never edit _onCreate silently.
+        onUpgrade: _onUpgrade,
       ),
     );
     _db = db;
@@ -74,7 +75,35 @@ class AppDatabase {
     }
   }
 
+  /// Fresh installs build the v1 schema and then run every migration, so a new
+  /// database is always identical to an upgraded one.
   static Future<void> _onCreate(Database db, int version) async {
+    await createV1Schema(db);
+    await _onUpgrade(db, 1, version);
+  }
+
+  /// Schema changes go here as new steps; never edit [createV1Schema].
+  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) await _migrateV1ToV2(db);
+  }
+
+  /// v2: commission mode per chit, winner payout per auction. Existing chits
+  /// default to 'from_dividend' so their recorded auctions keep the old maths.
+  static Future<void> _migrateV1ToV2(DatabaseExecutor db) async {
+    await db.execute("ALTER TABLE chit_groups ADD COLUMN commission_mode TEXT NOT NULL "
+        "DEFAULT 'from_dividend' CHECK (commission_mode IN ('from_dividend','from_winner'))");
+    await db.execute('ALTER TABLE chit_auctions ADD COLUMN winner_payout REAL '
+        'CHECK (winner_payout IS NULL OR winner_payout >= 0)');
+    await backfillWinnerPayout(db);
+  }
+
+  /// Auctions recorded before v2 paid the winner the full winning amount.
+  static Future<void> backfillWinnerPayout(DatabaseExecutor db) => db.execute(
+      'UPDATE chit_auctions SET winner_payout = winning_amount WHERE winner_payout IS NULL');
+
+  /// The original (v1) tables, indexes and guards. Frozen: change the schema
+  /// with a migration step in [_onUpgrade] instead.
+  static Future<void> createV1Schema(Database db) async {
     await db.execute('''
       CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

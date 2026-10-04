@@ -18,9 +18,10 @@ class ChitService {
     required int members,
     required int durationMonths,
     double commissionPercent = 0,
+    String commissionMode = CommissionMode.fromWinner,
     required String startDate,
   }) async {
-    _validate(name, chitValue, members, durationMonths, commissionPercent);
+    _validate(name, chitValue, members, durationMonths, commissionPercent, commissionMode);
     final db = await _app.database;
     final now = nowStamp();
     return db.insert('chit_groups', {
@@ -29,6 +30,7 @@ class ChitService {
       'number_of_members': members,
       'duration_months': durationMonths,
       'commission_percent': commissionPercent,
+      'commission_mode': commissionMode,
       'start_date': startDate,
       'status': RecordStatus.active,
       'created_at': now,
@@ -44,9 +46,10 @@ class ChitService {
     required int members,
     required int durationMonths,
     required double commissionPercent,
+    required String commissionMode,
     required String startDate,
   }) async {
-    _validate(name, chitValue, members, durationMonths, commissionPercent);
+    _validate(name, chitValue, members, durationMonths, commissionPercent, commissionMode);
     final db = await _app.database;
     await db.transaction((txn) async {
       final current = await _getChit(txn, id);
@@ -59,7 +62,8 @@ class ChitService {
       if (auctions.isNotEmpty) {
         final termsChanged = current.chitValue != chitValue ||
             current.numberOfMembers != members ||
-            (current.commissionPercent - commissionPercent).abs() > kEps;
+            (current.commissionPercent - commissionPercent).abs() > kEps ||
+            current.commissionMode != commissionMode;
         if (termsChanged) {
           throw const ValidationException(
               'Chit value, members and commission are locked after the first auction');
@@ -77,6 +81,7 @@ class ChitService {
           'number_of_members': members,
           'duration_months': durationMonths,
           'commission_percent': commissionPercent,
+          'commission_mode': commissionMode,
           'start_date': startDate,
           'updated_at': nowStamp(),
         },
@@ -86,7 +91,11 @@ class ChitService {
     });
   }
 
-  void _validate(String name, double? value, int members, int months, double commission) {
+  void _validate(
+      String name, double? value, int members, int months, double commission, String mode) {
+    if (!CommissionMode.all.contains(mode)) {
+      throw ValidationException('Unknown commission mode: $mode');
+    }
     if (name.trim().isEmpty) throw const ValidationException('Chit name is required');
     if (value != null && value <= 0) {
       throw const ValidationException('Chit value must be more than zero');
@@ -242,6 +251,7 @@ class ChitService {
         members: chit.numberOfMembers,
         winningAmount: winningAmount,
         commissionPercent: chit.commissionPercent,
+        commissionMode: chit.commissionMode,
       );
       final id = await txn.insert('chit_auctions', {
         'chit_group_id': chitId,
@@ -253,6 +263,7 @@ class ChitService {
         'commission_amount': calc.commission,
         'dividend_pool': calc.dividendPool,
         'dividend_per_member': calc.dividendPerMember,
+        'winner_payout': calc.winnerPayout,
         'created_at': nowStamp(),
       });
       final updated = await txn.update('chit_members', {'has_won': 1},
@@ -276,7 +287,8 @@ class ChitService {
   }
 
   /// Creates pending contribution rows for every active member for [month].
-  /// Amount is base minus dividend if that month's auction exists, else base.
+  /// Amount is the calculator's effective contribution if that month's auction
+  /// exists, else the base (value ÷ members).
   Future<int> ensureContributions(int chitId, int month) async {
     final db = await _app.database;
     return db.transaction((txn) async {
@@ -290,10 +302,15 @@ class ChitService {
       }
       final auction = await txn.query('chit_auctions',
           where: 'chit_group_id = ? AND month_number = ?', whereArgs: [chitId, month]);
-      final base = round2(value / chit.numberOfMembers);
       final amount = auction.isEmpty
-          ? base
-          : round2(base - ((auction.first['dividend_per_member'] as num?) ?? 0).toDouble());
+          ? round2(value / chit.numberOfMembers)
+          : ChitCalculator.calculate(
+              chitValue: value,
+              members: chit.numberOfMembers,
+              winningAmount: ChitAuction.fromMap(auction.first).winningAmount,
+              commissionPercent: chit.commissionPercent,
+              commissionMode: chit.commissionMode,
+            ).effectiveContribution;
       return _ensureContributions(txn, chit, month, amount);
     });
   }

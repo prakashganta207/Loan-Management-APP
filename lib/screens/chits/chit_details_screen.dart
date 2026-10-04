@@ -202,7 +202,8 @@ class _ChitDetailsScreenState extends State<ChitDetailsScreen> {
                 leading: CircleAvatar(child: Text('${a.monthNumber}')),
                 title: Text(a.winnerName ?? 'Member #${a.winnerMemberId}',
                     style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text('Took ${money(a.winningAmount)} on ${prettyDate(a.auctionDate)}\n'
+                subtitle: Text('Won at ${money(a.winningAmount)} on ${prettyDate(a.auctionDate)}'
+                    ' · received ${money(a.winnerPayout)}\n'
                     'Dividend ${money(a.dividendPerMember)} per member · '
                     'commission ${money(a.commissionAmount)}'),
                 isThreeLine: true,
