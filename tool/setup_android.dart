@@ -42,8 +42,8 @@ void main() {
     final patched = src
         .replaceAll('io.flutter.embedding.android.FlutterActivity;',
             'io.flutter.embedding.android.FlutterFragmentActivity;')
-        .replaceAll('io.flutter.embedding.android.FlutterActivity\n',
-            'io.flutter.embedding.android.FlutterFragmentActivity\n')
+        .replaceAllMapped(RegExp(r'io\.flutter\.embedding\.android\.FlutterActivity(\r?\n)'),
+            (m) => 'io.flutter.embedding.android.FlutterFragmentActivity${m[1]}')
         .replaceAll(': FlutterActivity()', ': FlutterFragmentActivity()')
         .replaceAll('extends FlutterActivity', 'extends FlutterFragmentActivity');
     f.writeAsStringSync(patched);
