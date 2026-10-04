@@ -95,4 +95,3 @@ tool/          setup_android.dart
 - Backups are written to the app's external files folder
   (`Android/data/<package>/files/backups`) — copy them off the phone yourself.
 - UPI confirmation is manual; there is no payment verification (per spec).
-"# Loan-Management-APP" 
