@@ -139,15 +139,19 @@ class _BorrowerProfileScreenState extends State<BorrowerProfileScreen> {
                             style: const TextStyle(fontWeight: FontWeight.w600)),
                         subtitle: Text('${money(s.loan.totalPayable)} · '
                             '${money(s.loan.dailyPayment)}/day · from ${prettyDate(s.loan.startDate)}'),
-                        trailing: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            StatusChip(s.loan.status),
-                            const SizedBox(height: 4),
-                            Text(money(s.outstanding),
-                                style: const TextStyle(fontWeight: FontWeight.w600)),
-                          ],
+                        // Scales down instead of overflowing with a large phone font.
+                        trailing: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              StatusChip(s.loan.status),
+                              const SizedBox(height: 4),
+                              Text(money(s.outstanding),
+                                  style: const TextStyle(fontWeight: FontWeight.w600)),
+                            ],
+                          ),
                         ),
                         onTap: () => _openLoan(s.loan.id!),
                       ),
