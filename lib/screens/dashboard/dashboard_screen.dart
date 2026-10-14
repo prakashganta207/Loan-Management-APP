@@ -9,6 +9,7 @@ import '../../services/loan_service.dart';
 import '../../services/report_service.dart';
 import '../../widgets/common.dart';
 import '../loans/loan_details_screen.dart';
+import '../loans/payment_entry_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -54,6 +55,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _openLoan(int loanId) async {
     await Navigator.push(
         context, MaterialPageRoute(builder: (_) => LoanDetailsScreen(loanId: loanId)));
+    if (mounted) _reload();
+  }
+
+  Future<void> _openPayment(int loanId) async {
+    await Navigator.push(
+        context, MaterialPageRoute(builder: (_) => PaymentEntryScreen(loanId: loanId)));
     if (mounted) _reload();
   }
 
@@ -204,7 +211,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: Text(s.loan.borrowerName ?? '', style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text('${s.loan.loanName} · due ${money(item.due)}$partial$behind'),
         trailing: trailing,
-        onTap: () => _openLoan(s.loan.id!),
+        // Tap → payment entry (SPEC); long-press → full loan details.
+        onTap: () => _openPayment(s.loan.id!),
+        onLongPress: () => _openLoan(s.loan.id!),
       ),
     );
   }
