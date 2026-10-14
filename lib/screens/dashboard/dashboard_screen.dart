@@ -22,7 +22,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final _loans = LoanService();
   late Future<DashboardData> _future = _reports.dashboard();
 
+  /// Loans with a quick paid/missed save in flight; repeat taps are ignored so a
+  /// double tap can't write two ledger rows.
+  final Set<int> _saving = {};
+
   void _reload() => setState(() => _future = _reports.dashboard());
+
+  Future<void> _guarded(int loanId, Future<void> Function() action) async {
+    if (!_saving.add(loanId)) return;
+    setState(() {});
+    try {
+      await action();
+    } finally {
+      _saving.remove(loanId);
+      if (mounted) setState(() {});
+    }
+  }
 
   Future<void> _refresh() async {
     _reload();
@@ -42,7 +57,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (mounted) _reload();
   }
 
-  Future<void> _quickPaid(TodayItem item) async {
+  Future<void> _quickPaid(TodayItem item) => _guarded(item.summary.loan.id!, () async {
     final s = item.summary;
     final amount = round2(math.min(item.stillDue, s.outstanding));
     if (amount <= 0) return;
@@ -59,9 +74,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } catch (e) {
       if (mounted) showMessage(context, errorText(e), error: true);
     }
-  }
+  });
 
-  Future<void> _markMissed(TodayItem item) async {
+  Future<void> _markMissed(TodayItem item) => _guarded(item.summary.loan.id!, () async {
     final s = item.summary;
     final today = todayKey();
     final next = s.nextDueDate;
@@ -74,7 +89,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } catch (e) {
       if (mounted) showMessage(context, errorText(e), error: true);
     }
-  }
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -170,16 +185,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } else if (item.missedToday) {
       trailing = const StatusChip('missed', label: 'Missed');
     } else {
+      final busy = _saving.contains(s.loan.id);
       trailing = Row(mainAxisSize: MainAxisSize.min, children: [
         IconButton.filledTonal(
           tooltip: 'Mark paid',
           icon: const Icon(Icons.check),
-          onPressed: () => _quickPaid(item),
+          onPressed: busy ? null : () => _quickPaid(item),
         ),
         IconButton(
           tooltip: 'Mark missed',
           icon: const Icon(Icons.close, color: AppColors.missed),
-          onPressed: () => _markMissed(item),
+          onPressed: busy ? null : () => _markMissed(item),
         ),
       ]);
     }
