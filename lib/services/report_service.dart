@@ -142,6 +142,9 @@ class ReportService {
       if (parseDate(s.loan.startDate).isAfter(todayDate)) continue;
       final p = paid[s.loan.id] ?? 0;
       if (s.isCleared && p <= kEps) continue;
+      // Paid ahead on an earlier day: nothing falls due today.
+      final next = s.nextDueDate;
+      if (next != null && next.compareTo(today) > 0 && p <= kEps) continue;
       items.add(TodayItem(
         summary: s,
         due: round2(math.min(s.loan.dailyPayment, s.outstanding + p)),
