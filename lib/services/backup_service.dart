@@ -81,19 +81,25 @@ class BackupService {
     }
     final tables = Map<String, dynamic>.from(data['tables'] as Map);
     final db = await _app.database;
-    await db.transaction((txn) async {
-      await AppDatabase.dropGuards(txn);
-      for (final t in AppDatabase.dataTables.reversed) {
-        await txn.delete(t);
-      }
-      for (final t in AppDatabase.dataTables) {
-        final rows = (tables[t] as List?) ?? const [];
-        for (final r in rows) {
-          await txn.insert(t, Map<String, Object?>.from(r as Map));
+    try {
+      await db.transaction((txn) async {
+        await AppDatabase.dropGuards(txn);
+        for (final t in AppDatabase.dataTables.reversed) {
+          await txn.delete(t);
         }
-      }
-      await AppDatabase.backfillWinnerPayout(txn);
-      await AppDatabase.createGuards(txn);
-    });
+        for (final t in AppDatabase.dataTables) {
+          final rows = (tables[t] as List?) ?? const [];
+          for (final r in rows) {
+            await txn.insert(t, Map<String, Object?>.from(r as Map));
+          }
+        }
+        await AppDatabase.backfillWinnerPayout(txn);
+        await AppDatabase.createGuards(txn);
+      });
+    } catch (_) {
+      // The transaction rolled back, so the phone's data is untouched.
+      throw const ValidationException(
+          'This backup file is damaged or not from this app. Nothing was changed.');
+    }
   }
 }

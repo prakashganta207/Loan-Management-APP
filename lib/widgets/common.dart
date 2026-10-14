@@ -8,7 +8,11 @@ import '../models/models.dart';
 import '../services/chit_calculator.dart';
 import '../services/upi_service.dart';
 
-String errorText(Object e) => e is ValidationException ? e.message : 'Error: $e';
+/// Rule violations are shown as written; anything unexpected gets a plain first
+/// line, with the technical detail kept underneath for troubleshooting.
+String errorText(Object e) => e is ValidationException
+    ? e.message
+    : 'Something went wrong. Please try again.\nDetails: $e';
 
 void showMessage(BuildContext context, String message, {bool error = false}) {
   final scheme = Theme.of(context).colorScheme;

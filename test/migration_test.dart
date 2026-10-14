@@ -6,6 +6,7 @@ import 'package:loan_chit_manager/data/database.dart';
 import 'package:loan_chit_manager/models/models.dart';
 import 'package:loan_chit_manager/services/backup_service.dart';
 import 'package:loan_chit_manager/services/chit_service.dart';
+import 'package:loan_chit_manager/widgets/common.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -157,6 +158,33 @@ void main() {
       expect(restored.commissionMode, CommissionMode.fromDividend);
       final db = await AppDatabase.instance.database;
       expect((await db.query('chit_auctions')).single['winner_payout'], 90000);
+    });
+
+    test('AUDIT A5: a damaged backup gives a plain message and changes nothing', () async {
+      await ChitService().createChit(
+          name: 'Keep me', members: 2, durationMonths: 2, startDate: '2026-01-01');
+      for (final damage in <void Function(Map<String, dynamic>)>[
+        (t) => t['loans'] = ['not a row'],
+        (t) => t['borrowers'] = [
+              {'id': 1, 'nme': 'typo column'}
+            ],
+        (t) => t['chit_groups'] = 'not a list',
+      ]) {
+        final snapshot = await BackupService().buildSnapshot();
+        damage(snapshot['tables'] as Map<String, dynamic>);
+        await expectLater(
+          () => BackupService().restoreSnapshot(snapshot),
+          throwsA(isA<ValidationException>().having((e) => e.message, 'message',
+              'This backup file is damaged or not from this app. Nothing was changed.')),
+        );
+      }
+      expect((await ChitService().listChits()).single.group.chitName, 'Keep me');
+    });
+
+    test('AUDIT A5: unexpected errors are shown in plain words', () {
+      final text = errorText(StateError('Bad state: cursor window full'));
+      expect(text, startsWith('Something went wrong. Please try again.'));
+      expect(errorText(const ValidationException('Name is required')), 'Name is required');
     });
 
     test('rejects a backup from a newer schema', () async {

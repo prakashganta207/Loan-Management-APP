@@ -50,7 +50,9 @@ class _SplashScreenState extends State<SplashScreen> {
               if (_error == null)
                 const CircularProgressIndicator()
               else
-                Text('Could not open the database:\n$_error', textAlign: TextAlign.center),
+                Text('Could not open your records. Close the app and open it again.\n'
+                    'Details: $_error',
+                    textAlign: TextAlign.center),
             ],
           ),
         ),
