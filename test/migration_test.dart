@@ -76,14 +76,14 @@ void main() {
     await dir.delete(recursive: true);
   });
 
-  test('v1 database upgrades to v2 keeping old chits on from_dividend', () async {
+  test('v1 database upgrades to the current schema keeping old chits on from_dividend', () async {
     final path = await createV1Database(dir);
     await AppDatabase.instance.close();
     AppDatabase.factoryOverride = databaseFactoryFfi;
     AppDatabase.pathOverride = path;
 
     final db = await AppDatabase.instance.database;
-    expect(await db.getVersion(), 2);
+    expect(await db.getVersion(), AppDatabase.schemaVersion);
 
     final chits = ChitService();
     final old = (await chits.listChits()).single.group;
@@ -189,7 +189,7 @@ void main() {
 
     test('rejects a backup from a newer schema', () async {
       final snapshot = await BackupService().buildSnapshot();
-      snapshot['schema_version'] = 3;
+      snapshot['schema_version'] = AppDatabase.schemaVersion + 1;
       await expectLater(
           () => BackupService().restoreSnapshot(snapshot), throwsA(isA<ValidationException>()));
     });
@@ -204,7 +204,7 @@ void main() {
           chitId: id, monthNumber: 1, winnerMemberId: m, winningAmount: 90000,
           auctionDate: '2026-01-01');
       final snapshot = await BackupService().buildSnapshot();
-      expect(snapshot['schema_version'], 2);
+      expect(snapshot['schema_version'], AppDatabase.schemaVersion);
       await BackupService().restoreSnapshot(snapshot);
       final restored = (await chits.listChits()).single.group;
       expect(restored.commissionMode, CommissionMode.fromWinner);

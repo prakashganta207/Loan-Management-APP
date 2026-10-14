@@ -19,6 +19,27 @@ class RecordStatus {
       };
 }
 
+/// How a loan is repaid. Monthly loans reuse `daily_payment` for the monthly
+/// instalment and `duration_days` for the number of months (see SPEC.md).
+class RepaymentType {
+  static const daily = 'daily';
+  static const monthly = 'monthly';
+  static const all = [daily, monthly];
+}
+
+/// Where a chit auction's winner stands in the "set up a loan" queue.
+class LoanSetupStatus {
+  static const pending = 'pending';
+  static const created = 'created';
+  static const dismissed = 'dismissed';
+
+  static String label(String s) => switch (s) {
+        created => 'Loan created',
+        dismissed => 'Dismissed',
+        _ => 'Waiting for setup',
+      };
+}
+
 class PaymentStatus {
   static const paid = 'paid';
   static const missed = 'missed';
@@ -117,6 +138,10 @@ class Loan {
     required this.status,
     required this.createdAt,
     required this.updatedAt,
+    this.repaymentType = RepaymentType.daily,
+    this.lateInterestPercent = 0,
+    this.graceDays = 0,
+    this.sourceChitAuctionId,
     this.borrowerName,
   });
 
@@ -124,10 +149,33 @@ class Loan {
   final int borrowerId;
   final String loanName;
   final double totalPayable;
+
+  /// DB column `daily_payment`: the instalment (per day, or per month for monthly
+  /// loans). Prefer [installmentAmount] in new code.
   final double dailyPayment;
+
+  /// DB column `duration_days`: number of instalments (days, or months for monthly
+  /// loans). Prefer [installmentCount] in new code.
   final int durationDays;
   final double finePerDay;
   final String startDate;
+  final String repaymentType;
+
+  /// Monthly loans: simple interest per month on an overdue instalment.
+  final double lateInterestPercent;
+
+  /// Monthly loans: days after the due date before late interest starts.
+  final int graceDays;
+
+  /// Set when the loan was created for a chit auction winner.
+  final int? sourceChitAuctionId;
+
+  bool get isMonthly => repaymentType == RepaymentType.monthly;
+  double get installmentAmount => dailyPayment;
+  int get installmentCount => durationDays;
+
+  /// "day" or "month" — for labels like "₹300 / day".
+  String get periodLabel => isMonthly ? 'month' : 'day';
   final String status;
   final String createdAt;
   final String updatedAt;
@@ -147,6 +195,10 @@ class Loan {
         status: m['status'] as String? ?? RecordStatus.active,
         createdAt: m['created_at'] as String? ?? '',
         updatedAt: m['updated_at'] as String? ?? '',
+        repaymentType: m['repayment_type'] as String? ?? RepaymentType.daily,
+        lateInterestPercent: _d(m['late_interest_percent']),
+        graceDays: _i(m['grace_days']),
+        sourceChitAuctionId: m['source_chit_auction_id'] as int?,
         borrowerName: m['borrower_name'] as String?,
       );
 }
@@ -193,16 +245,23 @@ class LoanPayment {
 
 /// A payment row joined with its loan and borrower names (history/report lists).
 class PaymentRow {
-  const PaymentRow({required this.payment, required this.loanName, required this.borrowerName});
+  const PaymentRow({
+    required this.payment,
+    required this.loanName,
+    required this.borrowerName,
+    this.repaymentType = RepaymentType.daily,
+  });
 
   final LoanPayment payment;
   final String loanName;
   final String borrowerName;
+  final String repaymentType;
 
   factory PaymentRow.fromMap(Map<String, Object?> m) => PaymentRow(
         payment: LoanPayment.fromMap(m),
         loanName: m['loan_name'] as String? ?? '',
         borrowerName: m['borrower_name'] as String? ?? '',
+        repaymentType: m['repayment_type'] as String? ?? RepaymentType.daily,
       );
 }
 
@@ -217,6 +276,9 @@ class LoanSummary {
     required this.coveredDays,
     required this.daysRemaining,
     required this.overdueDays,
+    this.overdueInstallments = 0,
+    this.accruedLateCharge = 0,
+    this.paidBySlot = const {},
   });
 
   final Loan loan;
@@ -233,6 +295,22 @@ class LoanSummary {
 
   /// How many days the next due slot is behind today (0 if on time/ahead).
   final int overdueDays;
+
+  /// Instalments whose due date is before today and that are not fully paid.
+  final int overdueInstallments;
+
+  /// Monthly loans: late interest built up on overdue instalments as of today
+  /// (not charged yet — it is charged when the late payment is recorded).
+  final double accruedLateCharge;
+
+  /// Amount paid per schedule date (`yyyy-MM-dd` → ₹).
+  final Map<String, double> paidBySlot;
+
+  /// What is still unpaid on the instalment due on [slot].
+  double unpaidOn(String slot) {
+    final left = round2(loan.installmentAmount - (paidBySlot[slot] ?? 0));
+    return left < 0 ? 0 : left;
+  }
 
   bool get isCleared => outstanding <= kEps;
 }
@@ -323,6 +401,8 @@ class ChitAuction {
     required this.dividendPerMember,
     required this.winnerPayout,
     required this.createdAt,
+    this.loanSetupStatus = LoanSetupStatus.pending,
+    this.loanId,
     this.winnerName,
   });
 
@@ -340,6 +420,10 @@ class ChitAuction {
   /// What the winner actually receives (winning amount, minus commission in from_winner mode).
   final double winnerPayout;
   final String createdAt;
+
+  /// Whether a loan was set up for the winner (pending / created / dismissed).
+  final String loanSetupStatus;
+  final int? loanId;
   final String? winnerName;
 
   factory ChitAuction.fromMap(Map<String, Object?> m) => ChitAuction(
@@ -355,6 +439,8 @@ class ChitAuction {
         dividendPerMember: _d(m['dividend_per_member']),
         winnerPayout: _d(m['winner_payout'] ?? m['winning_amount']),
         createdAt: m['created_at'] as String? ?? '',
+        loanSetupStatus: m['loan_setup_status'] as String? ?? LoanSetupStatus.pending,
+        loanId: m['loan_id'] as int?,
         winnerName: m['winner_name'] as String?,
       );
 }
@@ -415,4 +501,49 @@ class ChitSummary {
   final double totalDividends;
 
   bool get isFull => memberCount >= group.numberOfMembers;
+}
+
+/// A chit auction winner in the "set up a loan" queue (Loans screen).
+class ChitLoanItem {
+  const ChitLoanItem({
+    required this.auctionId,
+    required this.chitId,
+    required this.chitName,
+    required this.monthNumber,
+    required this.auctionDate,
+    required this.memberId,
+    required this.memberName,
+    this.memberPhone,
+    required this.prize,
+    required this.status,
+    this.loanId,
+  });
+
+  final int auctionId;
+  final int chitId;
+  final String chitName;
+  final int monthNumber;
+  final String auctionDate;
+  final int memberId;
+  final String memberName;
+  final String? memberPhone;
+
+  /// What the winner received: winner payout, or the winning amount for old rows.
+  final double prize;
+  final String status;
+  final int? loanId;
+
+  factory ChitLoanItem.fromMap(Map<String, Object?> m) => ChitLoanItem(
+        auctionId: _i(m['auction_id']),
+        chitId: _i(m['chit_group_id']),
+        chitName: m['chit_name'] as String? ?? '',
+        monthNumber: _i(m['month_number']),
+        auctionDate: m['auction_date'] as String? ?? '',
+        memberId: _i(m['winner_member_id']),
+        memberName: m['member_name'] as String? ?? '',
+        memberPhone: m['phone'] as String?,
+        prize: _d(m['winner_payout'] ?? m['winning_amount']),
+        status: m['loan_setup_status'] as String? ?? LoanSetupStatus.pending,
+        loanId: m['loan_id'] as int?,
+      );
 }

@@ -10,7 +10,8 @@ class AppDatabase {
   static DatabaseFactory? factoryOverride;
   static String? pathOverride;
   /// v1: initial schema. v2: chit commission_mode + auction winner_payout.
-  static const int schemaVersion = 2;
+  /// v3: monthly loans + chit-winner loan setup.
+  static const int schemaVersion = 3;
 
   Database? _db;
 
@@ -79,13 +80,18 @@ class AppDatabase {
   /// database is always identical to an upgraded one.
   static Future<void> _onCreate(Database db, int version) async {
     await createV1Schema(db);
-    await _onUpgrade(db, 1, version);
+    await migrate(db, 1, version);
   }
 
   /// Schema changes go here as new steps; never edit [createV1Schema].
-  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) await _migrateV1ToV2(db);
+  /// Public so tests can build a database exactly as an older app version left it.
+  static Future<void> migrate(DatabaseExecutor db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2 && newVersion >= 2) await _migrateV1ToV2(db);
+    if (oldVersion < 3 && newVersion >= 3) await _migrateV2ToV3(db);
   }
+
+  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) =>
+      migrate(db, oldVersion, newVersion);
 
   /// v2: commission mode per chit, winner payout per auction. Existing chits
   /// default to 'from_dividend' so their recorded auctions keep the old maths.
@@ -95,6 +101,28 @@ class AppDatabase {
     await db.execute('ALTER TABLE chit_auctions ADD COLUMN winner_payout REAL '
         'CHECK (winner_payout IS NULL OR winner_payout >= 0)');
     await backfillWinnerPayout(db);
+  }
+
+  /// v3: monthly repayment loans and the "chit winner → loan" setup queue.
+  /// Existing loans become 'daily'; existing auctions become 'pending' setup items.
+  /// For monthly loans `daily_payment` holds the monthly instalment and
+  /// `duration_days` the number of months (columns can't be renamed on older Android).
+  static Future<void> _migrateV2ToV3(DatabaseExecutor db) async {
+    await db.execute("ALTER TABLE loans ADD COLUMN repayment_type TEXT NOT NULL "
+        "DEFAULT 'daily' CHECK (repayment_type IN ('daily','monthly'))");
+    await db.execute('ALTER TABLE loans ADD COLUMN late_interest_percent REAL NOT NULL '
+        'DEFAULT 0 CHECK (late_interest_percent >= 0)');
+    await db.execute('ALTER TABLE loans ADD COLUMN grace_days INTEGER NOT NULL '
+        'DEFAULT 0 CHECK (grace_days >= 0)');
+    // No FK here: restore inserts loans before chit tables.
+    await db.execute('ALTER TABLE loans ADD COLUMN source_chit_auction_id INTEGER');
+    await db.execute("ALTER TABLE chit_auctions ADD COLUMN loan_setup_status TEXT NOT NULL "
+        "DEFAULT 'pending' CHECK (loan_setup_status IN ('pending','created','dismissed'))");
+    await db.execute(
+        'ALTER TABLE chit_auctions ADD COLUMN loan_id INTEGER REFERENCES loans(id)');
+    // At most one loan per auction, even if two setups race.
+    await db.execute('CREATE UNIQUE INDEX idx_loans_source_auction ON loans(source_chit_auction_id) '
+        'WHERE source_chit_auction_id IS NOT NULL');
   }
 
   /// Auctions recorded before v2 paid the winner the full winning amount.
