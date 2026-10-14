@@ -27,7 +27,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// double tap can't write two ledger rows.
   final Set<int> _saving = {};
 
-  void _reload() => setState(() => _future = _reports.dashboard());
+  void _reload() => setState(() {
+        _future = _reports.dashboard();
+      });
 
   Future<void> _guarded(int loanId, Future<void> Function() action) async {
     if (!_saving.add(loanId)) return;
@@ -129,6 +131,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     onTap: () => _open(Routes.settings),
                   ),
                 ),
+              if (d.chitLoansWaiting > 0)
+                Card(
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.emoji_events_outlined),
+                    title: Text('${d.chitLoansWaiting} chit winner'
+                        '${d.chitLoansWaiting == 1 ? ' needs' : 's need'} loan setup'),
+                    subtitle: const Text('Set up how each prize is repaid, or dismiss it.'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _open(Routes.loans),
+                  ),
+                ),
               StatGrid(children: [
                 StatCard(
                   label: "Today's collection",
@@ -184,7 +198,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _scheduleTile(TodayItem item) {
     final s = item.summary;
-    final behind = s.overdueDays > 0 ? ' · ${s.overdueDays}d behind' : '';
+    final behind = s.loan.isMonthly
+        ? (s.overdueInstallments > 0 ? ' · ${s.overdueInstallments} instalment(s) overdue' : '')
+        : (s.overdueDays > 0 ? ' · ${s.overdueDays}d behind' : '');
     final partial = item.paidToday > 0 && !item.isCollected ? ' · got ${money(item.paidToday)}' : '';
     Widget trailing;
     if (item.isCollected) {

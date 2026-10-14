@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../../core/format.dart';
 import '../../models/models.dart';
 import '../../services/borrower_service.dart';
 import '../../services/loan_service.dart';
 import '../../widgets/common.dart';
 import '../borrowers/borrower_form_screen.dart';
+import 'loan_terms_form.dart';
 
 /// Add Loan. Pops with the new loan id.
 class LoanFormScreen extends StatefulWidget {
@@ -21,15 +21,10 @@ class _LoanFormScreenState extends State<LoanFormScreen> {
   final _borrowerService = BorrowerService();
   final _loanService = LoanService();
   final _name = TextEditingController();
-  final _total = TextEditingController();
-  final _daily = TextEditingController();
-  final _duration = TextEditingController();
-  final _fine = TextEditingController(text: '0');
+  final _terms = LoanTermsController();
 
   List<Borrower> _borrowers = [];
   int? _borrowerId;
-  String _startDate = todayKey();
-  bool _durationEdited = false;
   bool _saving = false;
   bool _loading = true;
 
@@ -42,9 +37,8 @@ class _LoanFormScreenState extends State<LoanFormScreen> {
 
   @override
   void dispose() {
-    for (final c in [_name, _total, _daily, _duration, _fine]) {
-      c.dispose();
-    }
+    _name.dispose();
+    _terms.dispose();
     super.dispose();
   }
 
@@ -66,16 +60,6 @@ class _LoanFormScreenState extends State<LoanFormScreen> {
     await _loadBorrowers();
   }
 
-  /// Suggests duration = total ÷ daily until the lender types their own.
-  void _suggestDuration() {
-    if (_durationEdited) return;
-    final total = parseAmount(_total.text);
-    final daily = parseAmount(_daily.text);
-    if (total != null && daily != null && daily > 0) {
-      _duration.text = '${(total / daily - kEps).ceil()}';
-    }
-  }
-
   Future<void> _save() async {
     if (_borrowerId == null) {
       showMessage(context, 'Choose a borrower first', error: true);
@@ -84,14 +68,18 @@ class _LoanFormScreenState extends State<LoanFormScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
+      final t = _terms;
       final id = await _loanService.createLoan(
         borrowerId: _borrowerId!,
         loanName: _name.text,
-        totalPayable: parseAmount(_total.text)!,
-        dailyPayment: parseAmount(_daily.text)!,
-        durationDays: int.parse(_duration.text.trim()),
-        finePerDay: parseAmount(_fine.text) ?? 0,
-        startDate: _startDate,
+        totalPayable: t.totalValue,
+        dailyPayment: t.installmentValue,
+        durationDays: t.countValue,
+        finePerDay: t.fineValue,
+        startDate: t.startDate,
+        repaymentType: t.type,
+        lateInterestPercent: t.interestValue,
+        graceDays: t.graceValue,
       );
       if (mounted) Navigator.pop(context, id);
     } catch (e) {
@@ -143,40 +131,7 @@ class _LoanFormScreenState extends State<LoanFormScreen> {
                     validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                   ),
                   const SizedBox(height: 14),
-                  AmountField(
-                    controller: _total,
-                    label: 'Total payable *',
-                    helperText: 'The full amount the borrower will repay',
-                    onChanged: (_) => _suggestDuration(),
-                  ),
-                  const SizedBox(height: 14),
-                  AmountField(
-                    controller: _daily,
-                    label: 'Daily payment *',
-                    onChanged: (_) => _suggestDuration(),
-                  ),
-                  const SizedBox(height: 14),
-                  CountField(
-                    controller: _duration,
-                    label: 'Duration (days) *',
-                    helperText: _durationEdited
-                        ? 'Set by you'
-                        : 'Filled in from total ÷ daily — change it if needed',
-                    onChanged: (_) => setState(() => _durationEdited = true),
-                  ),
-                  const SizedBox(height: 14),
-                  AmountField(
-                    controller: _fine,
-                    label: 'Fine per late day',
-                    required: false,
-                    allowZero: true,
-                  ),
-                  const SizedBox(height: 14),
-                  DateField(
-                    label: 'Start date (first collection day)',
-                    value: _startDate,
-                    onChanged: (v) => setState(() => _startDate = v),
-                  ),
+                  LoanTermsFields(controller: _terms),
                   const SizedBox(height: 24),
                   FilledButton(
                     onPressed: _saving ? null : _save,

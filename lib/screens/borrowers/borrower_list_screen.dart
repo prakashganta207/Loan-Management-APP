@@ -23,7 +23,9 @@ class _BorrowerListScreenState extends State<BorrowerListScreen> {
   Future<List<BorrowerWithBalance>> _load() =>
       _service.listWithBalances(includeArchived: _showArchived, query: _query);
 
-  void _reload() => setState(() => _future = _load());
+  void _reload() => setState(() {
+        _future = _load();
+      });
 
   Future<void> _add() async {
     final id = await Navigator.push<int>(

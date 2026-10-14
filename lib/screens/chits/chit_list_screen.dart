@@ -19,7 +19,9 @@ class _ChitListScreenState extends State<ChitListScreen> {
   String _status = RecordStatus.active;
   late Future<List<ChitSummary>> _future = _service.listChits(status: _status);
 
-  void _reload() => setState(() => _future = _service.listChits(status: _status));
+  void _reload() => setState(() {
+        _future = _service.listChits(status: _status);
+      });
 
   Future<void> _push(Widget screen) async {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));

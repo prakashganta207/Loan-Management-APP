@@ -5,6 +5,8 @@ import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../services/chit_service.dart';
 import '../../widgets/common.dart';
+import '../loans/loan_details_screen.dart';
+import '../loans/loan_setup_screen.dart';
 import 'auction_entry_screen.dart';
 import 'chit_form_screen.dart';
 import 'member_form_screen.dart';
@@ -34,7 +36,9 @@ class _ChitDetailsScreenState extends State<ChitDetailsScreen> {
         await _service.auctions(widget.chitId),
       );
 
-  void _reload() => setState(() => _future = _load());
+  void _reload() => setState(() {
+        _future = _load();
+      });
 
   Future<void> _push(Widget screen) async {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
@@ -164,6 +168,31 @@ class _ChitDetailsScreenState extends State<ChitDetailsScreen> {
     );
   }
 
+  /// Waiting / Loan created / Dismissed: whether the winner's prize became a loan.
+  Widget _loanChip(String status) => StatusChip(
+        switch (status) {
+          LoanSetupStatus.created => 'paid',
+          LoanSetupStatus.dismissed => 'archived',
+          _ => 'pending',
+        },
+        label: switch (status) {
+          LoanSetupStatus.created => 'Loan created',
+          LoanSetupStatus.dismissed => 'Dismissed',
+          _ => 'Waiting',
+        },
+      );
+
+  Future<void> _openAuctionLoan(ChitAuction a) async {
+    final loanId = a.loanId;
+    if (a.loanSetupStatus == LoanSetupStatus.created && loanId != null) {
+      await _push(LoanDetailsScreen(loanId: loanId));
+    } else if (a.loanSetupStatus == LoanSetupStatus.pending) {
+      await _push(LoanSetupScreen(auctionId: a.id!));
+    } else {
+      showMessage(context, 'Dismissed. Restore it from Loans, then "Dismissed".');
+    }
+  }
+
   Widget _auctionsTab(ChitSummary s, _ChitData d) {
     final g = s.group;
     final allDone = d.auctions.length >= g.durationMonths;
@@ -207,6 +236,8 @@ class _ChitDetailsScreenState extends State<ChitDetailsScreen> {
                     'Dividend ${money(a.dividendPerMember)} per member · '
                     'commission ${money(a.commissionAmount)}'),
                 isThreeLine: true,
+                trailing: _loanChip(a.loanSetupStatus),
+                onTap: () => _openAuctionLoan(a),
               ),
             ),
       ],
@@ -230,7 +261,9 @@ class _ContributionsTabState extends State<_ContributionsTab> {
   Future<List<ChitContribution>> _load() =>
       _service.contributions(widget.summary.group.id!, _month);
 
-  void _reload() => setState(() => _future = _load());
+  void _reload() => setState(() {
+        _future = _load();
+      });
 
   Future<void> _generate() async {
     try {

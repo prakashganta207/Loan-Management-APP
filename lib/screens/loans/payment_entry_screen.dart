@@ -52,8 +52,11 @@ class _PaymentEntryScreenState extends State<PaymentEntryScreen> {
     setState(() {
       _summary = s;
       _upiReady = upiReady;
-      _slot = s.nextDueDate ?? todayKey();
-      _amount.text = round2(math.min(s.loan.dailyPayment, s.outstanding)).toStringAsFixed(2);
+      _slot = s.nextDueDate ?? (s.loan.isMonthly ? s.loan.startDate : todayKey());
+      _amount.text = (s.loan.isMonthly
+              ? s.nextDueUnpaid
+              : round2(math.min(s.loan.installmentAmount, s.outstanding)))
+          .toStringAsFixed(2);
       _updateFine();
     });
   }
@@ -62,7 +65,30 @@ class _PaymentEntryScreenState extends State<PaymentEntryScreen> {
 
   void _updateFine() {
     if (_fineEdited || _summary == null) return;
-    _fine.text = LoanService.suggestedFine(_loan, _slot, DateTime.now()).toStringAsFixed(2);
+    _fine.text = LoanService.suggestedFine(_loan, _slot, DateTime.now(), unpaid: _slotUnpaid)
+        .toStringAsFixed(2);
+  }
+
+  /// What is still unpaid on the chosen instalment (monthly late interest is
+  /// charged on this part only).
+  double get _slotUnpaid {
+    final i = LoanService.slotIndex(_loan, _slot);
+    if (i == null) return 0;
+    final left = round2(LoanService.slotDue(_loan, i) - (_summary!.paidBySlot[_slot] ?? 0));
+    return left < 0 ? 0 : left;
+  }
+
+  /// Monthly loans: the unpaid instalments the lender can record against.
+  List<String> get _monthlySlots {
+    final s = _summary!;
+    final first = LoanService.slotIndex(_loan, s.nextDueDate ?? _loan.startDate) ?? 0;
+    final count = math.max(1, s.daysRemaining);
+    return [
+      for (var i = first; i < first + count + 12 && i < first + 120; i++)
+        if ((s.paidBySlot[LoanService.slotKey(_loan, i)] ?? 0) <
+            LoanService.slotDue(_loan, i) - kEps)
+          LoanService.slotKey(_loan, i),
+    ].take(math.max(count, 1)).toList();
   }
 
   int get _lateDays => math.max(0, daysBetween(parseDate(_slot), DateTime.now()));
@@ -109,8 +135,14 @@ class _PaymentEntryScreenState extends State<PaymentEntryScreen> {
           appBar: AppBar(title: const Text('Record payment')),
           body: const Center(child: CircularProgressIndicator()));
     }
-    final extra = _amountValue > _loan.dailyPayment + kEps;
-    final days = (_amountValue / _loan.dailyPayment - kEps).ceil();
+    final monthly = _loan.isMonthly;
+    final unit = monthly ? 'instalment' : 'day';
+    final extra = _amountValue > _loan.installmentAmount + kEps;
+    final days = (_amountValue / _loan.installmentAmount - kEps).ceil();
+    final slots = monthly ? _monthlySlots : const <String>[];
+    final lateHelp = _lateDays > 0
+        ? '$_lateDays day${_lateDays == 1 ? '' : 's'} late'
+        : 'On time';
     return Scaffold(
       appBar: AppBar(title: Text('Payment — ${_loan.borrowerName}')),
       body: Form(
@@ -124,24 +156,46 @@ class _PaymentEntryScreenState extends State<PaymentEntryScreen> {
                 child: Column(children: [
                   InfoRow('Loan', _loan.loanName),
                   InfoRow('Outstanding', money(s.outstanding), emphasize: true),
-                  InfoRow('Daily payment', money(_loan.dailyPayment)),
-                  InfoRow('First unpaid day', prettyDate(s.nextDueDate)),
+                  InfoRow(monthly ? 'Monthly instalment' : 'Daily payment',
+                      '${money(_loan.installmentAmount)} / ${_loan.periodLabel}'),
+                  InfoRow(monthly ? 'First unpaid instalment' : 'First unpaid day',
+                      prettyDate(s.nextDueDate)),
+                  if (monthly && s.accruedLateCharge > 0)
+                    InfoRow('Late interest due so far', money(s.accruedLateCharge)),
                 ]),
               ),
             ),
             const SizedBox(height: 16),
-            DateField(
-              label: 'Schedule day this covers',
-              value: _slot,
-              helperText: _lateDays > 0
-                  ? '$_lateDays day${_lateDays == 1 ? '' : 's'} late'
-                  : 'On time',
-              firstDate: parseDate(_loan.startDate),
-              onChanged: (v) => setState(() {
-                _slot = v;
-                _updateFine();
-              }),
-            ),
+            if (monthly)
+              DropdownButtonFormField<String>(
+                // ignore: deprecated_member_use
+                value: slots.contains(_slot) ? _slot : (slots.isEmpty ? null : slots.first),
+                isExpanded: true,
+                decoration: InputDecoration(labelText: 'Instalment this covers', helperText: lateHelp),
+                items: [
+                  for (final k in slots)
+                    DropdownMenuItem(
+                      value: k,
+                      child: Text('Instalment ${(LoanService.slotIndex(_loan, k) ?? 0) + 1}'
+                          ' · due ${prettyDate(k)}'),
+                    ),
+                ],
+                onChanged: (v) => setState(() {
+                  if (v != null) _slot = v;
+                  _updateFine();
+                }),
+              )
+            else
+              DateField(
+                label: 'Schedule day this covers',
+                value: _slot,
+                helperText: lateHelp,
+                firstDate: parseDate(_loan.startDate),
+                onChanged: (v) => setState(() {
+                  _slot = v;
+                  _updateFine();
+                }),
+              ),
             const SizedBox(height: 14),
             AmountField(
               controller: _amount,
@@ -153,18 +207,21 @@ class _PaymentEntryScreenState extends State<PaymentEntryScreen> {
                 contentPadding: EdgeInsets.zero,
                 value: _split,
                 onChanged: (v) => setState(() => _split = v),
-                title: const Text('Apply the extra to following days'),
+                title: Text('Apply the extra to following ${unit}s'),
                 subtitle: Text(_split
-                    ? 'Covers about $days days, one ledger entry per day'
+                    ? 'Covers about $days ${unit}s, one ledger entry per $unit'
                     : 'Saved as a single entry on ${prettyDate(_slot)}'),
               ),
             const SizedBox(height: 14),
             AmountField(
               controller: _fine,
-              label: 'Fine',
+              label: monthly ? 'Late interest' : 'Fine',
               required: false,
               allowZero: true,
-              helperText: '$_lateDays late day(s) × ${money(_loan.finePerDay)} — you can change it',
+              helperText: monthly
+                  ? '${money(_slotUnpaid)} unpaid × ${_loan.lateInterestPercent}% × '
+                      '($_lateDays late − ${_loan.graceDays} grace days) ÷ 30 — you can change it'
+                  : '$_lateDays late day(s) × ${money(_loan.finePerDay)} — you can change it',
               onChanged: (_) => _fineEdited = true,
             ),
             const SizedBox(height: 14),

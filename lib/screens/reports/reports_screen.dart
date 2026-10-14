@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/format.dart';
 import '../../core/theme.dart';
+import '../../models/models.dart';
 import '../../services/report_service.dart';
 import '../../widgets/common.dart';
 import '../loans/payment_history_tile.dart';
@@ -83,7 +84,8 @@ class _DailyTabState extends State<_DailyTab> {
                   child: Column(children: [
                     for (final row in r.rows)
                       PaymentHistoryTile(row.payment,
-                          loanName: '${row.borrowerName} — ${row.loanName}'),
+                          loanName: '${row.borrowerName} — ${row.loanName}',
+                          monthly: row.repaymentType == RepaymentType.monthly),
                   ]),
                 ),
             ]);

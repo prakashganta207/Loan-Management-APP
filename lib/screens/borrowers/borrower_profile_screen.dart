@@ -37,7 +37,9 @@ class _BorrowerProfileScreenState extends State<BorrowerProfileScreen> {
         await _loans.paymentRows(borrowerId: widget.borrowerId),
       );
 
-  void _reload() => setState(() => _future = _load());
+  void _reload() => setState(() {
+        _future = _load();
+      });
 
   Future<void> _edit(Borrower b) async {
     await Navigator.push(
@@ -138,7 +140,8 @@ class _BorrowerProfileScreenState extends State<BorrowerProfileScreen> {
                         title: Text(s.loan.loanName,
                             style: const TextStyle(fontWeight: FontWeight.w600)),
                         subtitle: Text('${money(s.loan.totalPayable)} · '
-                            '${money(s.loan.dailyPayment)}/day · from ${prettyDate(s.loan.startDate)}'),
+                            '${money(s.loan.installmentAmount)}/${s.loan.periodLabel} · '
+                            'from ${prettyDate(s.loan.startDate)}'),
                         // Scales down instead of overflowing with a large phone font.
                         trailing: FittedBox(
                           fit: BoxFit.scaleDown,
@@ -162,7 +165,10 @@ class _BorrowerProfileScreenState extends State<BorrowerProfileScreen> {
               else
                 Card(
                   child: Column(children: [
-                    for (final r in d.payments) PaymentHistoryTile(r.payment, loanName: r.loanName),
+                    for (final r in d.payments)
+                      PaymentHistoryTile(r.payment,
+                          loanName: r.loanName,
+                          monthly: r.repaymentType == RepaymentType.monthly),
                   ]),
                 ),
             ],

@@ -6,9 +6,12 @@ import '../../widgets/common.dart';
 
 /// One ledger row: schedule date, amounts, fine, status, when it was recorded.
 class PaymentHistoryTile extends StatelessWidget {
-  const PaymentHistoryTile(this.payment, {super.key, this.loanName});
+  const PaymentHistoryTile(this.payment, {super.key, this.loanName, this.monthly = false});
   final LoanPayment payment;
   final String? loanName;
+
+  /// Monthly loans call the late charge "Late interest" instead of "Fine".
+  final bool monthly;
 
   @override
   Widget build(BuildContext context) {
@@ -16,7 +19,7 @@ class PaymentHistoryTile extends StatelessWidget {
     final parts = <String>[
       if (loanName != null) loanName!,
       'Scheduled ${money(p.scheduledAmount)}',
-      if (p.fineAmount > 0) 'Fine ${money(p.fineAmount)}',
+      if (p.fineAmount > 0) '${monthly ? 'Late interest' : 'Fine'} ${money(p.fineAmount)}',
       'Recorded ${prettyStamp(p.createdAt)}',
       if (p.note != null) p.note!,
     ];

@@ -5,17 +5,22 @@ import 'package:flutter/material.dart';
 import '../../core/format.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
+import '../../services/chit_loan_service.dart';
 import '../../services/loan_service.dart';
 import '../../services/upi_service.dart';
 import '../../widgets/common.dart';
+import '../chits/chit_details_screen.dart';
 import 'payment_entry_screen.dart';
 import 'payment_history_tile.dart';
 
 class _LoanData {
-  const _LoanData(this.summary, this.payments, this.upiReady);
+  const _LoanData(this.summary, this.payments, this.upiReady, this.source);
   final LoanSummary summary;
   final List<LoanPayment> payments;
   final bool upiReady;
+
+  /// The chit auction this loan was set up for, if any.
+  final ChitLoanItem? source;
 }
 
 class LoanDetailsScreen extends StatefulWidget {
@@ -32,14 +37,18 @@ class _LoanDetailsScreenState extends State<LoanDetailsScreen> {
 
   Future<_LoanData> _load() async {
     final payments = await _service.payments(widget.loanId);
+    final summary = await _service.summary(widget.loanId);
     return _LoanData(
-      await _service.summary(widget.loanId),
+      summary,
       payments.reversed.toList(),
       (await UpiService().config()) != null,
+      await ChitLoanService().sourceOf(summary.loan),
     );
   }
 
-  void _reload() => setState(() => _future = _load());
+  void _reload() => setState(() {
+        _future = _load();
+      });
 
   Future<void> _recordPayment() async {
     final saved = await Navigator.push<bool>(context,
@@ -50,11 +59,16 @@ class _LoanDetailsScreenState extends State<LoanDetailsScreen> {
   Future<void> _markMissed(LoanSummary s) async {
     final today = todayKey();
     final next = s.nextDueDate;
+    if (s.loan.isMonthly && (next == null || next.compareTo(today) > 0)) {
+      showMessage(context, 'The next instalment is not due yet');
+      return;
+    }
     final slot = (next != null && next.compareTo(today) <= 0) ? next : today;
     final ok = await confirmAction(context,
         title: 'Mark as missed?',
         message: 'Adds a "missed" entry for ${prettyDate(slot)}. Nothing is charged now; '
-            'the fine is added when the borrower pays late.',
+            'the ${s.loan.isMonthly ? 'late interest' : 'fine'} is added when the borrower '
+            'pays late.',
         confirmLabel: 'Mark missed');
     if (!ok) return;
     try {
@@ -66,7 +80,9 @@ class _LoanDetailsScreenState extends State<LoanDetailsScreen> {
   }
 
   Future<void> _upi(LoanSummary s) async {
-    final suggested = round2(math.min(s.loan.dailyPayment, s.outstanding));
+    final suggested = s.loan.isMonthly
+        ? s.nextDueUnpaid
+        : round2(math.min(s.loan.installmentAmount, s.outstanding));
     final text = await promptText(context,
         title: 'Amount to collect by UPI',
         label: 'Amount (₹)',
@@ -99,6 +115,12 @@ class _LoanDetailsScreenState extends State<LoanDetailsScreen> {
     } catch (e) {
       if (mounted) showMessage(context, errorText(e), error: true);
     }
+  }
+
+  Future<void> _openChit(int chitId) async {
+    await Navigator.push(
+        context, MaterialPageRoute(builder: (_) => ChitDetailsScreen(chitId: chitId)));
+    if (mounted) _reload();
   }
 
   Future<void> _changeStatus(String status) async {
@@ -156,17 +178,46 @@ class _LoanDetailsScreenState extends State<LoanDetailsScreen> {
                     if (s.overdueDays > 0)
                       Align(
                         alignment: Alignment.centerLeft,
-                        child: Text('${s.overdueDays} day${s.overdueDays == 1 ? '' : 's'} behind schedule',
+                        child: Text(
+                            loan.isMonthly
+                                ? '${s.overdueInstallments} instalment'
+                                    '${s.overdueInstallments == 1 ? '' : 's'} overdue · '
+                                    '${s.overdueDays} day${s.overdueDays == 1 ? '' : 's'} late'
+                                : '${s.overdueDays} day${s.overdueDays == 1 ? '' : 's'} behind schedule',
                             style: const TextStyle(color: AppColors.missed, fontWeight: FontWeight.w600)),
+                      ),
+                    if (d.source != null)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          style: TextButton.styleFrom(padding: EdgeInsets.zero),
+                          onPressed: () => _openChit(d.source!.chitId),
+                          icon: const Icon(Icons.groups, size: 18),
+                          label: Text('From chit: ${d.source!.chitName}, '
+                              'month ${d.source!.monthNumber}'),
+                        ),
                       ),
                     const Divider(height: 24),
                     InfoRow('Total payable', money(loan.totalPayable)),
                     InfoRow('Paid so far', money(s.totalPaid)),
-                    InfoRow('Fines collected', money(s.totalFine)),
-                    InfoRow('Daily payment', money(loan.dailyPayment)),
-                    InfoRow('Fine per late day', money(loan.finePerDay)),
-                    InfoRow('Started', prettyDate(loan.startDate)),
-                    InfoRow('Days covered', '${s.coveredDays} of ${loan.durationDays}'),
+                    if (loan.isMonthly) ...[
+                      InfoRow('Late interest collected', money(s.totalFine)),
+                      if (s.accruedLateCharge > 0)
+                        InfoRow('Late interest due so far', money(s.accruedLateCharge),
+                            color: AppColors.missed),
+                      InfoRow('Monthly instalment', '${money(loan.installmentAmount)} / month'),
+                      InfoRow('Late interest',
+                          '${loan.lateInterestPercent}% a month after ${loan.graceDays} grace days'),
+                      InfoRow('First due', prettyDate(loan.startDate)),
+                      InfoRow('Instalments paid',
+                          '${s.coveredDays} of ${loan.installmentCount}'),
+                    ] else ...[
+                      InfoRow('Fines collected', money(s.totalFine)),
+                      InfoRow('Daily payment', '${money(loan.installmentAmount)} / day'),
+                      InfoRow('Fine per late day', money(loan.finePerDay)),
+                      InfoRow('Started', prettyDate(loan.startDate)),
+                      InfoRow('Days covered', '${s.coveredDays} of ${loan.installmentCount}'),
+                    ],
                     InfoRow('Payments left', '${s.daysRemaining}'),
                     InfoRow('Next due', s.isCleared ? '—' : prettyDate(s.nextDueDate)),
                   ]),
@@ -218,7 +269,9 @@ class _LoanDetailsScreenState extends State<LoanDetailsScreen> {
                 const EmptyState(icon: Icons.history, message: 'No payments recorded yet.')
               else
                 Card(
-                  child: Column(children: [for (final p in d.payments) PaymentHistoryTile(p)]),
+                  child: Column(children: [
+                    for (final p in d.payments) PaymentHistoryTile(p, monthly: loan.isMonthly),
+                  ]),
                 ),
               const SizedBox(height: 24),
             ],
