@@ -100,6 +100,24 @@ void main() {
     expect(s.nextDueDate, '2026-01-01');
   });
 
+  test('AUDIT A9: a smaller last instalment counts as a covered day', () async {
+    final b = await BorrowerService().create(name: 'Sita');
+    final id = await loans.createLoan(
+        borrowerId: b, loanName: 'Small loan', totalPayable: 1000, dailyPayment: 300,
+        durationDays: 4, startDate: '2026-01-01');
+    await loans.recordPayment(loanId: id, slotDate: '2026-01-01', amount: 900);
+    var s = await loans.summary(id);
+    expect([s.outstanding, s.daysRemaining, s.nextDueDate, s.coveredDays],
+        [100, 1, '2026-01-04', 3]);
+
+    await loans.recordPayment(loanId: id, slotDate: '2026-01-04', amount: 100);
+    s = await loans.summary(id);
+    expect(s.isCleared, isTrue);
+    expect(s.daysRemaining, 0);
+    expect(s.nextDueDate, isNull);
+    expect(s.coveredDays, 4); // 300 + 300 + 300 + 100
+  });
+
   test('suggested fine counts late days', () async {
     final loan = await loans.getLoan(loanId);
     expect(LoanService.suggestedFine(loan, '2026-01-01', DateTime(2026, 1, 4)), 30);

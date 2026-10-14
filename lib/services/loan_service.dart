@@ -162,7 +162,10 @@ class LoanService {
 
     var covered = 0;
     for (var i = 0; i < loan.durationDays; i++) {
-      if ((paidBySlot[dateKey(addDays(start, i))] ?? 0) >= loan.dailyPayment - kEps) covered++;
+      // The last instalment is whatever is left (₹1,000 at ₹300/day → 300, 300, 300, 100).
+      final due = round2(math.min(loan.dailyPayment, loan.totalPayable - loan.dailyPayment * i));
+      if (due <= kEps) break;
+      if ((paidBySlot[dateKey(addDays(start, i))] ?? 0) >= due - kEps) covered++;
     }
 
     String? nextDue;
