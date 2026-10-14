@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import '../core/format.dart';
 import '../data/database.dart';
 import '../models/models.dart';
+import 'chit_loan_service.dart';
 import 'loan_service.dart';
 import 'settings_service.dart';
 
@@ -31,6 +32,7 @@ class DashboardData {
     required this.activeChits,
     required this.items,
     required this.backupDue,
+    this.chitLoansWaiting = 0,
   });
   final double expected;
   final double collected;
@@ -39,6 +41,9 @@ class DashboardData {
   final int activeChits;
   final List<TodayItem> items;
   final bool backupDue;
+
+  /// Chit auction winners whose loan has not been set up yet.
+  final int chitLoansWaiting;
 }
 
 class DailyReport {
@@ -145,9 +150,20 @@ class ReportService {
       // Paid ahead on an earlier day: nothing falls due today.
       final next = s.nextDueDate;
       if (next != null && next.compareTo(today) > 0 && p <= kEps) continue;
+      // Daily: one day's payment. Monthly (only listed when an instalment is due
+      // today or overdue): the unpaid part of that instalment; if today's money
+      // already covered it, it shows as collected.
+      final double due;
+      if (!s.loan.isMonthly) {
+        due = math.min(s.loan.installmentAmount, s.outstanding + p);
+      } else if (next == null || next.compareTo(today) > 0) {
+        due = p;
+      } else {
+        due = math.min(s.nextDueUnpaid + p, s.outstanding + p);
+      }
       items.add(TodayItem(
         summary: s,
-        due: round2(math.min(s.loan.dailyPayment, s.outstanding + p)),
+        due: round2(due),
         paidToday: round2(p),
         missedToday: missed[s.loan.id] ?? false,
       ));
@@ -184,6 +200,7 @@ class ReportService {
           'SELECT COUNT(*) FROM chit_groups WHERE status = ?', [RecordStatus.active]),
       items: items,
       backupDue: await _backupDue(),
+      chitLoansWaiting: await ChitLoanService(_app).count(),
     );
   }
 

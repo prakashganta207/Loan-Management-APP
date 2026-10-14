@@ -278,6 +278,7 @@ class LoanSummary {
     required this.overdueDays,
     this.overdueInstallments = 0,
     this.accruedLateCharge = 0,
+    this.nextDueUnpaid = 0,
     this.paidBySlot = const {},
   });
 
@@ -306,11 +307,8 @@ class LoanSummary {
   /// Amount paid per schedule date (`yyyy-MM-dd` → ₹).
   final Map<String, double> paidBySlot;
 
-  /// What is still unpaid on the instalment due on [slot].
-  double unpaidOn(String slot) {
-    final left = round2(loan.installmentAmount - (paidBySlot[slot] ?? 0));
-    return left < 0 ? 0 : left;
-  }
+  /// What is still unpaid on the instalment due on [nextDueDate].
+  final double nextDueUnpaid;
 
   bool get isCleared => outstanding <= kEps;
 }

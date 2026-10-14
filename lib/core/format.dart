@@ -29,6 +29,15 @@ DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
 DateTime addDays(DateTime d, int days) => DateTime(d.year, d.month, d.day + days);
 
+/// [d] plus [months] calendar months, keeping the day of the month but clamping
+/// it to the month's last day: 31 Jan + 1 → 28/29 Feb, 31 Jan + 2 → 31 Mar.
+/// Callers always add to the original date (never chain), so the day never drifts.
+DateTime addMonthsClamped(DateTime d, int months) {
+  final first = DateTime(d.year, d.month + months, 1);
+  final lastDay = DateTime(first.year, first.month + 1, 0).day;
+  return DateTime(first.year, first.month, d.day < lastDay ? d.day : lastDay);
+}
+
 /// Whole calendar days from [a] to [b] (negative if b is before a).
 int daysBetween(DateTime a, DateTime b) =>
     DateTime.utc(b.year, b.month, b.day)

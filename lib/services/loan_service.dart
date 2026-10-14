@@ -14,6 +14,8 @@ class LoanService {
   static const _selectLoan =
       'SELECT l.*, b.name AS borrower_name FROM loans l JOIN borrowers b ON b.id = l.borrower_id';
 
+  /// Creates a loan. For monthly loans [dailyPayment] is the monthly instalment,
+  /// [durationDays] the number of months and [startDate] the first due date.
   Future<int> createLoan({
     required int borrowerId,
     required String loanName,
@@ -22,22 +24,62 @@ class LoanService {
     required int durationDays,
     double finePerDay = 0,
     required String startDate,
+    String repaymentType = RepaymentType.daily,
+    double lateInterestPercent = 0,
+    int graceDays = 0,
   }) async {
+    final db = await _app.database;
+    return insertLoan(db,
+        borrowerId: borrowerId,
+        loanName: loanName,
+        totalPayable: totalPayable,
+        installment: dailyPayment,
+        installmentCount: durationDays,
+        finePerDay: finePerDay,
+        startDate: startDate,
+        repaymentType: repaymentType,
+        lateInterestPercent: lateInterestPercent,
+        graceDays: graceDays);
+  }
+
+  /// Validates and inserts a loan on [db] (a database or an open transaction).
+  static Future<int> insertLoan(
+    DatabaseExecutor db, {
+    required int borrowerId,
+    required String loanName,
+    required double totalPayable,
+    required double installment,
+    required int installmentCount,
+    double finePerDay = 0,
+    required String startDate,
+    String repaymentType = RepaymentType.daily,
+    double lateInterestPercent = 0,
+    int graceDays = 0,
+    int? sourceChitAuctionId,
+  }) async {
+    final monthly = repaymentType == RepaymentType.monthly;
+    final what = monthly ? 'Monthly instalment' : 'Daily payment';
+    if (!RepaymentType.all.contains(repaymentType)) {
+      throw ValidationException('Unknown repayment type: $repaymentType');
+    }
     if (loanName.trim().isEmpty) throw const ValidationException('Loan name is required');
     if (totalPayable <= 0) {
       throw const ValidationException('Total payable must be more than zero');
     }
-    if (dailyPayment <= 0) {
-      throw const ValidationException('Daily payment must be more than zero');
+    if (installment <= 0) throw ValidationException('$what must be more than zero');
+    if (installment > totalPayable) {
+      throw ValidationException('$what cannot be more than total payable');
     }
-    if (dailyPayment > totalPayable) {
-      throw const ValidationException('Daily payment cannot be more than total payable');
+    if (installmentCount <= 0) {
+      throw ValidationException('Duration must be at least 1 ${monthly ? 'month' : 'day'}');
     }
-    if (durationDays <= 0) throw const ValidationException('Duration must be at least 1 day');
     if (finePerDay < 0) throw const ValidationException('Fine per day cannot be negative');
+    if (lateInterestPercent < 0 || lateInterestPercent > 100) {
+      throw const ValidationException('Late interest must be between 0 and 100% a month');
+    }
+    if (graceDays < 0) throw const ValidationException('Grace days cannot be negative');
     _checkDate(startDate);
 
-    final db = await _app.database;
     final borrower =
         await db.query('borrowers', where: 'id = ?', whereArgs: [borrowerId], limit: 1);
     if (borrower.isEmpty) throw const ValidationException('Choose a borrower');
@@ -49,11 +91,15 @@ class LoanService {
       'borrower_id': borrowerId,
       'loan_name': loanName.trim(),
       'total_payable': round2(totalPayable),
-      'daily_payment': round2(dailyPayment),
-      'duration_days': durationDays,
-      'fine_per_day': round2(finePerDay),
+      'daily_payment': round2(installment),
+      'duration_days': installmentCount,
+      'fine_per_day': monthly ? 0 : round2(finePerDay),
       'start_date': startDate,
       'status': RecordStatus.active,
+      'repayment_type': repaymentType,
+      'late_interest_percent': monthly ? lateInterestPercent : 0,
+      'grace_days': monthly ? graceDays : 0,
+      'source_chit_auction_id': sourceChitAuctionId,
       'created_at': now,
       'updated_at': now,
     });
@@ -98,7 +144,7 @@ class LoanService {
       args.add('$createdLike%');
     }
     final rows = await db.rawQuery('''
-      SELECT p.*, l.loan_name, b.name AS borrower_name
+      SELECT p.*, l.loan_name, l.repayment_type, b.name AS borrower_name
       FROM loan_payments p
       JOIN loans l ON l.id = p.loan_id
       JOIN borrowers b ON b.id = l.borrower_id
@@ -145,6 +191,42 @@ class LoanService {
     return (where.isEmpty ? '' : ' WHERE ${where.join(' AND ')}', args);
   }
 
+  /// Due date of instalment [i] (0-based): start + i days, or start + i months
+  /// clamped to the month's end. Always computed from the start date, never
+  /// chained, so 31 Jan → 28/29 Feb → 31 Mar → 30 Apr.
+  static DateTime slotDate(Loan loan, int i) {
+    final start = parseDate(loan.startDate);
+    return loan.isMonthly ? addMonthsClamped(start, i) : addDays(start, i);
+  }
+
+  static String slotKey(Loan loan, int i) => dateKey(slotDate(loan, i));
+
+  /// Index of the instalment due on [date], or null when no instalment falls on it.
+  static int? slotIndex(Loan loan, String date) {
+    final d = parseDate(date);
+    final start = parseDate(loan.startDate);
+    if (d.isBefore(start)) return null;
+    if (!loan.isMonthly) return daysBetween(start, d);
+    final i = (d.year - start.year) * 12 + d.month - start.month;
+    return slotKey(loan, i) == dateKey(d) ? i : null;
+  }
+
+  /// Amount due on instalment [i]: the instalment, except the last one, which is
+  /// whatever is left of the total (₹1,000 at ₹300/day → 300, 300, 300, 100).
+  static double slotDue(Loan loan, int i) {
+    final due = round2(
+        math.min(loan.installmentAmount, loan.totalPayable - loan.installmentAmount * i));
+    return due < 0 ? 0 : due;
+  }
+
+  /// Monthly loans: simple interest on the overdue instalment only —
+  /// unpaid × rate% × max(0, days late − grace days) ÷ 30. It is never charged on
+  /// the whole loan and never compounds.
+  static double lateInterest(Loan loan, double unpaid, int daysLate) {
+    final chargeable = math.max(0, daysLate - loan.graceDays);
+    return round2(unpaid * loan.lateInterestPercent / 100 * chargeable / 30);
+  }
+
   /// Pure function: everything the UI shows about a loan comes from here.
   static LoanSummary computeSummary(Loan loan, List<LoanPayment> payments, DateTime today) {
     var totalPaid = 0.0;
@@ -158,32 +240,45 @@ class LoanService {
     totalPaid = round2(totalPaid);
     totalFine = round2(totalFine);
     final outstanding = math.max(0.0, round2(loan.totalPayable - totalPaid));
-    final start = parseDate(loan.startDate);
 
     var covered = 0;
-    for (var i = 0; i < loan.durationDays; i++) {
-      // The last instalment is whatever is left (₹1,000 at ₹300/day → 300, 300, 300, 100).
-      final due = round2(math.min(loan.dailyPayment, loan.totalPayable - loan.dailyPayment * i));
+    for (var i = 0; i < loan.installmentCount; i++) {
+      final due = slotDue(loan, i);
       if (due <= kEps) break;
-      if ((paidBySlot[dateKey(addDays(start, i))] ?? 0) >= due - kEps) covered++;
+      if ((paidBySlot[slotKey(loan, i)] ?? 0) >= due - kEps) covered++;
     }
 
     String? nextDue;
+    var nextDueUnpaid = 0.0;
+    var overdueCount = 0;
+    var accrued = 0.0;
+    final todayDate = dateOnly(today);
     if (outstanding > kEps) {
-      // Bounded scan: duration plus ten years of extra slots for loans that run over.
-      for (var i = 0; i < loan.durationDays + 3650; i++) {
-        final k = dateKey(addDays(start, i));
-        if ((paidBySlot[k] ?? 0) < loan.dailyPayment - kEps) {
+      // Bounded scan: duration plus extra slots (ten years) for loans that run over.
+      final extra = loan.isMonthly ? 120 : 3650;
+      for (var i = 0; i < loan.installmentCount + extra; i++) {
+        final k = slotKey(loan, i);
+        final paid = paidBySlot[k] ?? 0;
+        if (paid >= loan.installmentAmount - kEps) continue;
+        final unpaid = round2(loan.installmentAmount - paid);
+        if (nextDue == null) {
           nextDue = k;
-          break;
+          nextDueUnpaid = math.min(unpaid, outstanding);
         }
+        final due = slotDate(loan, i);
+        if (!due.isBefore(todayDate)) break;
+        // Overdue instalment (due before today).
+        overdueCount++;
+        if (loan.isMonthly) accrued += lateInterest(loan, unpaid, daysBetween(due, todayDate));
+        // Stop once the overdue instalments already add up to the whole balance.
+        if (overdueCount * loan.installmentAmount >= outstanding - kEps) break;
       }
     }
 
     final overdue = nextDue == null ? 0 : math.max(0, daysBetween(parseDate(nextDue), today));
-    final remaining = outstanding <= kEps || loan.dailyPayment <= 0
+    final remaining = outstanding <= kEps || loan.installmentAmount <= 0
         ? 0
-        : (outstanding / loan.dailyPayment - kEps).ceil();
+        : (outstanding / loan.installmentAmount - kEps).ceil();
 
     return LoanSummary(
       loan: loan,
@@ -194,13 +289,21 @@ class LoanService {
       coveredDays: covered,
       daysRemaining: remaining,
       overdueDays: overdue,
+      overdueInstallments: overdueCount,
+      accruedLateCharge: round2(accrued),
+      nextDueUnpaid: round2(nextDueUnpaid),
+      paidBySlot: paidBySlot,
     );
   }
 
-  /// Fine for paying the [slotDate] instalment on [paidOn].
-  static double suggestedFine(Loan loan, String slotDate, DateTime paidOn) {
+  /// Late charge for paying the [slotDate] instalment on [paidOn].
+  /// Daily: late days × fine per day. Monthly: [lateInterest] on [unpaid]
+  /// (defaults to the full instalment).
+  static double suggestedFine(Loan loan, String slotDate, DateTime paidOn, {double? unpaid}) {
     final late = daysBetween(parseDate(slotDate), paidOn);
-    return late > 0 ? round2(late * loan.finePerDay) : 0;
+    if (late <= 0) return 0;
+    if (loan.isMonthly) return lateInterest(loan, unpaid ?? loan.installmentAmount, late);
+    return round2(late * loan.finePerDay);
   }
 
   /// Records money received. With [splitAcrossDays], an amount bigger than one
@@ -226,6 +329,7 @@ class LoanService {
         throw const ValidationException('Payments can only be recorded on active loans');
       }
       _checkNotBeforeStart(loan, slotDate);
+      final startSlot = _requireSlot(loan, slotDate);
       final existing = await _payments(txn, loanId);
       final s = computeSummary(loan, existing, DateTime.now());
       if (amount > s.outstanding + kEps) {
@@ -242,17 +346,17 @@ class LoanService {
       final ids = <int>[];
       var running = s.totalPaid;
       var remaining = round2(amount);
-      var date = parseDate(slotDate);
+      var slot = startSlot;
       var first = true;
       var guard = 0;
 
       while (remaining > kEps) {
         if (++guard > 20000) throw StateError('Payment allocation did not terminate');
-        final key = dateKey(date);
+        final key = slotKey(loan, slot);
         final already = paidBySlot[key] ?? 0;
-        final need = round2(loan.dailyPayment - already);
+        final need = round2(loan.installmentAmount - already);
         if (splitAcrossDays && need <= kEps) {
-          date = addDays(date, 1);
+          slot++;
           continue;
         }
         final alloc = splitAcrossDays ? math.min(remaining, need) : remaining;
@@ -264,7 +368,7 @@ class LoanService {
         ids.add(await txn.insert('loan_payments', {
           'loan_id': loanId,
           'payment_date': key,
-          'scheduled_amount': loan.dailyPayment,
+          'scheduled_amount': loan.installmentAmount,
           'amount_paid': round2(alloc),
           'fine_amount': first ? round2(fine) : 0,
           'status': status,
@@ -274,7 +378,7 @@ class LoanService {
         paidBySlot[key] = already + alloc;
         remaining = round2(remaining - alloc);
         first = false;
-        date = addDays(date, 1);
+        slot++;
         if (!splitAcrossDays) break;
       }
       await txn.update('loans', {'updated_at': now}, where: 'id = ?', whereArgs: [loanId]);
@@ -292,11 +396,12 @@ class LoanService {
         throw const ValidationException('Only active loans can be marked missed');
       }
       _checkNotBeforeStart(loan, slotDate);
+      _requireSlot(loan, slotDate);
       final existing = await _payments(txn, loanId);
       final paid = existing
           .where((p) => p.paymentDate == slotDate)
           .fold<double>(0, (sum, p) => sum + p.amountPaid);
-      if (paid >= loan.dailyPayment - kEps) {
+      if (paid >= loan.installmentAmount - kEps) {
         throw ValidationException('${prettyDate(slotDate)} is already paid');
       }
       if (existing.any((p) => p.paymentDate == slotDate && p.status == PaymentStatus.missed)) {
@@ -305,7 +410,7 @@ class LoanService {
       return txn.insert('loan_payments', {
         'loan_id': loanId,
         'payment_date': slotDate,
-        'scheduled_amount': loan.dailyPayment,
+        'scheduled_amount': loan.installmentAmount,
         'amount_paid': 0,
         'fine_amount': 0,
         'status': PaymentStatus.missed,
@@ -333,6 +438,16 @@ class LoanService {
       await txn.update('loans', {'status': newStatus, 'updated_at': nowStamp()},
           where: 'id = ?', whereArgs: [loanId]);
     });
+  }
+
+  /// Monthly loans can only be paid against an instalment due date.
+  static int _requireSlot(Loan loan, String slotDate) {
+    final i = slotIndex(loan, slotDate);
+    if (i == null) {
+      throw ValidationException(
+          '${prettyDate(slotDate)} is not an instalment due date for this loan');
+    }
+    return i;
   }
 
   static void _checkNotBeforeStart(Loan loan, String slotDate) {
