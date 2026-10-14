@@ -188,16 +188,17 @@ class _LoanDetailsScreenState extends State<LoanDetailsScreen> {
                       label: const Text('Mark missed'),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: d.upiReady
-                          ? () => _upi(s)
-                          : () => showMessage(context, 'Add your UPI ID in Settings first'),
-                      icon: const Icon(Icons.qr_code),
-                      label: const Text('Pay via UPI'),
+                  // SPEC §3: the UPI button appears only once a UPI ID is set in Settings.
+                  if (d.upiReady) ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _upi(s),
+                        icon: const Icon(Icons.qr_code),
+                        label: const Text('Pay via UPI'),
+                      ),
                     ),
-                  ),
+                  ],
                 ]),
               ],
               if (active && s.isCleared)

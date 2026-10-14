@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/format.dart';
 import '../../models/models.dart';
 import '../../services/loan_service.dart';
+import '../../services/upi_service.dart';
 import '../../widgets/common.dart';
 
 /// Records money received. Pops with true when something was saved.
@@ -28,6 +29,7 @@ class _PaymentEntryScreenState extends State<PaymentEntryScreen> {
   bool _fineEdited = false;
   bool _split = true;
   bool _saving = false;
+  bool _upiReady = false;
 
   @override
   void initState() {
@@ -45,9 +47,11 @@ class _PaymentEntryScreenState extends State<PaymentEntryScreen> {
 
   Future<void> _load() async {
     final s = await _service.summary(widget.loanId);
+    final upiReady = (await UpiService().config()) != null;
     if (!mounted) return;
     setState(() {
       _summary = s;
+      _upiReady = upiReady;
       _slot = s.nextDueDate ?? todayKey();
       _amount.text = round2(math.min(s.loan.dailyPayment, s.outstanding)).toStringAsFixed(2);
       _updateFine();
@@ -173,12 +177,15 @@ class _PaymentEntryScreenState extends State<PaymentEntryScreen> {
               onPressed: _saving ? null : () => _save(),
               child: const Text('Save payment'),
             ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: _saving ? null : _upi,
-              icon: const Icon(Icons.qr_code),
-              label: const Text('Collect via UPI, then save'),
-            ),
+            // SPEC §3: only offered once a UPI ID is set in Settings.
+            if (_upiReady) ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: _saving ? null : _upi,
+                icon: const Icon(Icons.qr_code),
+                label: const Text('Collect via UPI, then save'),
+              ),
+            ],
           ],
         ),
       ),
