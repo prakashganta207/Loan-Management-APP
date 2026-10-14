@@ -1,8 +1,8 @@
-# Loan & Chit Management App — Frozen Spec (v1 Rebuild)
+# Loan & Chit Management App — Spec (v1.0.0)
 
 This freezes the database schema and screen-by-screen UX before implementation, per the blueprint's recommendation. Any schema change after this point should be made via a migration, not a silent edit.
 
-**Current schema version: 2.** v1 → v2 added `chit_groups.commission_mode` and `chit_auctions.winner_payout` (see §1a).
+**App version: 1.0.0. Current schema version: 2.** v1 → v2 added `chit_groups.commission_mode` and `chit_auctions.winner_payout` (see §1a). This document describes what the v1.0.0 code does; open questions are listed in `AUDIT.md` under "Needs owner decision".
 
 ---
 
@@ -48,6 +48,20 @@ All tables use `id INTEGER PRIMARY KEY AUTOINCREMENT`. Dates stored as ISO-8601 
 | updated_at | TEXT | |
 
 Derived (computed at read time from `loan_payments`, never trusted as stored truth): `total_paid`, `total_fine`, `outstanding_balance = total_payable - total_paid`.
+
+#### Loan schedule rules (`LoanService.computeSummary` / `recordPayment`)
+- **Schedule day *i*** (0-based from `start_date`) is due `min(daily_payment, total_payable − daily_payment × i)`, so the last instalment can be smaller (₹1,000 at ₹300/day → 300, 300, 300, 100).
+- **Days covered** = schedule days within `duration_days` whose payments add up to that day's due amount.
+- **Next due date** = the first schedule day not fully paid (the scan continues past `duration_days` for loans that run over); none once the loan is cleared.
+- **Days behind** = days from the next due date to today (0 if it is today or later).
+- **Payments left** = ⌈outstanding ÷ daily_payment⌉.
+- **Recording money** (all amounts rounded to paise with `round2`):
+  - amount must be > 0 and ≤ outstanding; fine ≥ 0; the schedule day must not be before `start_date`; only active loans accept payments.
+  - With the multi-day split (default), the amount fills the chosen schedule day first (topping up a partial day), then each following day: one ledger row per day, status `paid` when that day is complete or the loan is cleared, else `partial`.
+  - With the split switched off, the whole amount is one row on the chosen day; the balance is right but the schedule (next due / days covered) does not move past that day.
+  - The fine goes on the first row only. Suggested fine = late days × `fine_per_day`, where late days = payment date − schedule day; the lender can edit it.
+- **Missed day**: a zero-amount `missed` row, at most once per schedule day, not allowed on a fully paid day or before `start_date`. It does not change the balance.
+- **Corrections**: there is no correction entry in v1.0.0 — a saved payment cannot be reversed (see AUDIT A3).
 
 ### loan_payments
 | column | type | notes |
@@ -159,7 +173,7 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 ### Business rules baked into the schema layer (not just UI)
 1. A `chit_member` with `has_won = 1` cannot be set as `winner_member_id` on a new auction for the same chit (checked in `chit_service`, enforced with a transaction).
 2. `loans.status` transitions only `active -> completed -> archived`; never deleted.
-3. `loan_payments` are append-only; corrections are new rows with a note, not edits to history (keeps the ledger auditable, matching the blueprint's "auditable ledger" requirement).
+3. `loan_payments` are append-only (SQLite triggers block UPDATE and DELETE; DELETE on `loans` is blocked too). History is never edited. A correction-entry mechanism is not built yet (AUDIT A3, needs owner decision).
 4. All money fields are non-negative; validated in the service layer before insert.
 
 ---
@@ -176,7 +190,9 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 
 ### Dashboard
 - Header stat row: Today's Collection (expected vs collected), Pending Borrowers count, Active Loans count, Active Chits count.
-- "Today's Collection Schedule" list: borrower name, amount due, paid/missed toggle, tap-through to payment entry.
+- "Today's Collection Schedule" list: every active loan that has started, except loans already cleared and loans paid ahead (next due date after today) with nothing collected today. Each row shows borrower, amount due (`min(daily_payment, outstanding + collected today)`), paid/missed buttons, and taps through to payment entry (long-press opens Loan Details).
+- Collected = loan money recorded today (`created_at` today, fines excluded); expected = sum of the rows' amounts due; pending borrowers = borrowers with a row that is neither collected nor marked missed today.
+- The quick paid/missed buttons ignore repeat taps while a save is running.
 - Quick action buttons: Loan Management, Chit Management, Chit Calculator, Reports.
 
 ### Borrower List
@@ -196,11 +212,11 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 - Fields: Borrower (picker, or "new borrower" inline), Loan name, Total payable, Daily payment, Duration (days, auto-suggested from total/daily but editable), Fine/day, Start date, Status defaults Active.
 
 ### Loan Details
-- Summary card: total payable, paid so far, outstanding, fines, days remaining.
-- Actions: Mark Payment (today), View Payment History, Trigger UPI Payment, Mark Completed/Archive (when outstanding = 0).
+- Summary card: total payable, paid so far, outstanding, fines, days behind, days covered, payments left, next due.
+- Actions: Record Payment, Mark Missed (next unpaid day up to today), Pay via UPI (only when a UPI ID is set), Mark Completed (when outstanding = 0), Archive (when completed). Payment history is a section on this screen.
 
 ### Payment Entry
-- Prefilled scheduled amount (daily_payment), editable amount field, date defaults today (editable for backdating missed days), fine auto-calculated from days-late × fine_per_day but editable, Save.
+- Prefilled amount `min(daily_payment, outstanding)`, editable; schedule day defaults to the first unpaid day (editable, not before the start date); fine auto-calculated from late days × fine_per_day but editable; Save. "Collect via UPI, then save" appears only when a UPI ID is set.
 - If amount paid > scheduled, offer to apply the excess to future scheduled days per the multi-day rule.
 
 ### Payment History
@@ -225,7 +241,7 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 - On save: marks winner has_won=1, locks the month's auction row.
 
 ### Contribution Tracking
-- Grid/list per month: member name, amount, paid/pending toggle, payment date.
+- Grid/list per month: member name, amount, paid/pending toggle, payment date. The list is created at chit value ÷ members; recording that month's auction re-prices still-pending rows to the calculator's "each member pays" amount. Rows already ticked paid keep their amount (AUDIT A7, needs owner decision).
 
 ### Auction History
 - List of past auctions per chit: month, winner, winning amount, winner payout, dividend/member, commission.
@@ -235,13 +251,13 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 - Outputs (live): Discount, Commission, Dividend Pool, Dividend/Member, Winner receives, Effective contribution per member with its formula.
 
 ### Reports
-- Daily: today's collected vs expected, list of today's transactions.
-- Monthly: month picker, total collected, total fines, chit contributions collected that month.
-- Overall: total money lent, total collected, outstanding balance, total fines, active/closed loan counts, active chit count, total commissions, total dividends paid.
+- Daily: loan money and fines recorded on the day (`created_at`), chit contributions marked paid that day, and its ledger entries; expected is shown for today only.
+- Monthly: month picker, loan money and fines recorded that month, chit contributions marked paid that month, commission of auctions dated that month, number of payment entries.
+- Overall: total lent (sum of total payable, all loans), total collected, outstanding (active loans), total fines, active/closed loan counts, active chit count, total commissions, total dividends (sum of dividend pools), contributions collected.
 
 ### Settings
 - Backup: "Export Backup Now" (writes a timestamped JSON/db file to device storage), shows last backup date, reminder toggle.
-- Restore: pick a backup file, confirm (destructive — double confirmation), restore.
+- Restore: pick a backup file, confirm (destructive — double confirmation), restore. Restore is one transaction that keeps the login, accepts v1 and v2 backups and rejects newer ones; a damaged file shows "This backup file is damaged or not from this app. Nothing was changed."
 - Security: change password, enable/disable PIN, enable/disable biometric (if device supports).
 - App Info: version, about, UPI payee ID/name configuration (used by the payment trigger).
 
@@ -255,7 +271,7 @@ Loan Details / Payment Entry
   → url_launcher opens installed UPI app
   → app returns to foreground
   → dialog: "Did the payment go through?" [Confirm Paid] [Not Yet]
-  → Confirm Paid records a loan_payment row with status=paid, note="UPI"
+  → Confirm Paid records the payment through the normal rules (multi-day split, note="UPI"); a row is `paid`, or `partial` if it covers less than that day's amount
 ```
 No automated verification in V1 — matches the blueprint's stated limitation.
 

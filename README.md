@@ -1,4 +1,4 @@
-# Loan & Chit Manager (V1)
+# Loan & Chit Manager (v1.0.0)
 
 Offline Flutter app for a small lender: daily-collection loans with an auditable
 ledger, chit funds with auctions and contributions, reports, local backup and a
@@ -41,9 +41,10 @@ If the Android build complains about `minSdk`, set `minSdk = 23` in
 
 ## Verification checklist
 
-- [ ] `flutter analyze` — no errors
-- [ ] `flutter test` — calculator, loan ledger, chit rules, backup round-trip (runs on
-      desktop via `sqflite_common_ffi`, no emulator needed)
+- [ ] `flutter analyze` — no issues
+- [ ] `flutter test` — calculator, loan ledger, chit rules, migrations, backup round-trip,
+      dashboard/report numbers and every screen at 360 dp (runs on desktop via
+      `sqflite_common_ffi`, no emulator needed)
 - [ ] First run: create account → dashboard
 - [ ] Add borrower → add loan (₹30,000 total, ₹300/day) → record ₹900 → history shows 3 rows
 - [ ] Dashboard: tick "paid" and "missed" on today's schedule
@@ -75,15 +76,23 @@ tool/          setup_android.dart
 ## Rules enforced below the UI
 
 - **Ledger is append-only.** SQLite triggers block UPDATE/DELETE on `loan_payments`
-  and DELETE on `loans`. Corrections are new rows with a note.
+  and DELETE on `loans`. There is no correction entry yet, so a saved payment cannot be
+  reversed (AUDIT A3 — needs owner decision).
 - **Multi-day payments.** ₹900 on a ₹300/day loan becomes three rows, one per schedule day.
-  A partial payment tops up the same day first. The lender can turn the split off per payment.
-- **No overpaying.** A payment larger than the outstanding balance is rejected.
+  A partial payment tops up the same day first. The lender can turn the split off per payment
+  (then the money is one row and the schedule does not move past that day).
+- **Smaller last instalment.** Day *i* is due `min(daily, total − daily × i)`, so ₹1,000 at
+  ₹300/day is 300, 300, 300, 100 and the loan shows 4 of 4 days covered when cleared.
+- **No overpaying, no early dates.** A payment larger than the outstanding balance, or dated
+  before the loan's start date, is rejected. All money is rounded to paise (`round2`).
+- **Fines** go on the first ledger row of a payment: late days × fine per day, editable.
 - **Loan status** only moves active → completed (when outstanding is zero) → archived.
 - **No repeat chit winners.** Checked and set inside one transaction, plus a unique
   `(chit, month)` constraint on auctions.
 - **"Today's collection"** is keyed on when money was recorded (`created_at`), not the
-  schedule day it covers, so borrowers who are behind still show up correctly.
+  schedule day it covers, so borrowers who are behind still show up correctly. Borrowers who
+  paid ahead on an earlier day are not listed as due or pending. The quick ✓/✗ buttons ignore
+  a double tap.
 - **Two chit commission modes** (chosen per chit, `ChitCalculator` is the only place the maths lives):
   - *Winner pays* (`from_winner`, default for new chits): the whole discount is shared, each
     member pays winning amount ÷ members, and the winner receives winning amount − commission.
@@ -91,11 +100,17 @@ tool/          setup_android.dart
     pays chit value ÷ members − dividend, and the winner receives the full winning amount.
   Chits created before schema v2 stay on `from_dividend` so recorded auctions remain correct.
 - **Chit terms lock** (value, members, commission %, commission mode) after the first auction.
+- **Contributions** start at chit value ÷ members; recording the month's auction re-prices the
+  rows still pending to the calculator's "each member pays" amount.
+- **Restore is all-or-nothing.** It runs in one transaction, keeps the login, re-creates the
+  ledger triggers, accepts v1/v2 backups, rejects newer ones, and a damaged file changes nothing.
 
 ## Deliberate simplifications
 
 - Payment history and auction history are sections inside Loan Details and Chit
   Details rather than separate screens.
+- Dashboard rows open Payment Entry; long-press a row for the full Loan Details.
+- UPI buttons appear only after a UPI ID is set in Settings.
 - Missed days add a zero-amount "missed" row; fines are charged when the late
   payment is recorded (late days × fine per day, editable).
 - Backups are written to the app's external files folder

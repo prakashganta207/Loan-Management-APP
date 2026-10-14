@@ -20,6 +20,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
 ## Findings
 
 ### A1 — CRITICAL · BUG — Double tap on dashboard "Mark paid" records the payment twice
+- **Status: FIXED** in `220617b` (failing test first, then the fix).
 - **Where:** `lib/screens/dashboard/dashboard_screen.dart:45` (`_quickPaid`), button at `:175`;
   same pattern for `_markMissed` at `:64`.
 - **What:** The ✓ button has no in-flight guard. Two taps before the list reloads start two
@@ -32,6 +33,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
   for a loan while its save is running.
 
 ### A2 — HIGH · BUG — Borrowers who paid ahead show as due and pending on the dashboard
+- **Status: FIXED** in `362e1da` (failing test first, then the fix).
 - **Where:** `lib/services/report_service.dart:141-151` (`todaySchedule`).
 - **What:** Every active loan gets `due = daily payment` today, even when the next unpaid
   schedule day is in the future. A borrower who paid 3 days on Monday shows "due ₹300" on
@@ -44,6 +46,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
   was collected from it today.
 
 ### A3 — HIGH · RULE CHANGE — There is no way to correct a mistaken payment
+- **Status: NOT IMPLEMENTED — needs owner decision** (see below).
 - **Where:** `lib/services/loan_service.dart:214` (amount must be > 0), DB
   `CHECK (amount_paid >= 0)`; README says "Corrections are new rows with a note".
 - **What:** The ledger is append-only (correct), but nothing can append a *correcting* entry:
@@ -56,6 +59,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
   fields are non-negative"), so it changes a business rule.
 
 ### A4 — MEDIUM · BUG — Async actions that touch the screen without a `mounted` check
+- **Status: FIXED** in `1a0f188` (failing test first, then the fix).
 - **Where:**
   - `lib/screens/settings/settings_screen.dart:66` (`_run` → `setState` after awaiting
     PIN/UPI/payee/fingerprint dialogs) and `:117` (`_restore` after the 2nd confirm)
@@ -70,6 +74,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
 - **Fix:** add `if (!mounted) return;` (or `if (mounted)`) before each of these.
 
 ### A5 — MEDIUM · BUG — Technical error text shown to the lender
+- **Status: FIXED** in `ef6b1c9` (failing test first, then the fix).
 - **Where:** `lib/widgets/common.dart:11` (`errorText` prints `Error: <exception>`),
   `lib/services/backup_service.dart:76-92` (restore does not validate rows),
   `lib/screens/auth/splash_screen.dart:30`.
@@ -84,6 +89,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
   "Something went wrong. Please try again." with the technical detail on a second line.
 
 ### A6 — MEDIUM · BUG — Loan tile on Borrower Profile overflows with a larger phone font
+- **Status: FIXED** in `9a43e44` (failing test first, then the fix).
 - **Where:** `lib/screens/borrowers/borrower_profile_screen.dart:142` (trailing `Column`).
 - **What:** at Android font size 1.3× on a 360 dp phone the status chip + balance column is
   2 px taller than the list tile → yellow/black overflow stripe.
@@ -92,6 +98,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
 - **Fix:** wrap the trailing column in `FittedBox(fit: BoxFit.scaleDown)`.
 
 ### A7 — MEDIUM · RULE CHANGE — A contribution paid before the auction keeps the old amount
+- **Status: NOT IMPLEMENTED — needs owner decision** (see below).
 - **Where:** `lib/services/chit_service.dart` `_ensureContributions` (only *pending* rows
   are re-priced after an auction).
 - **What:** if the lender ticks a member as paid before recording that month's auction, the
@@ -103,6 +110,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
   or carry the difference as a credit to next month. Either changes how collection works.
 
 ### A8 — MEDIUM · RULE CHANGE — With "apply extra to following days" off, the schedule does not advance
+- **Status: NOT IMPLEMENTED — needs owner decision** (see below).
 - **Where:** `lib/services/loan_service.dart:254` / `computeSummary` (schedule is per day).
 - **What:** ₹900 saved as one entry on day 1 of a ₹300/day loan: balance is right (₹2,100
   left) but next due stays day 2 and "days covered" = 1, so the dashboard asks for day 2.
@@ -111,6 +119,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
   single entry"), or remove the switch so excess is always split.
 
 ### A9 — LOW · BUG — "Days covered" shows 3 of 4 on a fully paid loan
+- **Status: FIXED** in `99d5d95` (failing test first, then the fix).
 - **Where:** `lib/services/loan_service.dart:163-166`.
 - **What:** when the total is not a multiple of the daily amount, the last instalment is
   smaller (₹1,000 at ₹300/day → 300, 300, 300, 100), but a day only counts as covered when
@@ -120,6 +129,7 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
   covered when that amount is paid.
 
 ### A10 — LOW · BUG — Service accepts a payment dated before the loan starts
+- **Status: FIXED** in `ba9ac93` (failing test first, then the fix).
 - **Where:** `lib/services/loan_service.dart:216` (`recordPayment`), `:283` (`markMissed`).
 - **What:** the UI date picker blocks it, but the service doesn't. The money counts towards
   the balance, but the schedule never sees it (next due stays the start date).
@@ -128,39 +138,69 @@ MEDIUM (bad UX / edge case) · LOW (cosmetic). Category: BUG or RULE CHANGE.
 - **Fix:** reject a slot date earlier than the loan start date.
 
 ### A11 — LOW · BUG — Dashboard schedule row opens Loan Details, SPEC says Payment Entry
+- **Status: FIXED** in `9c360e8` (failing test first, then the fix).
 - **Where:** `lib/screens/dashboard/dashboard_screen.dart:191`.
 - **SPEC:** Dashboard → "Today's Collection Schedule … tap-through to payment entry".
 - **Fix:** tapping the row opens `PaymentEntryScreen` for that loan and refreshes after.
 
 ### A12 — LOW · BUG — UPI buttons shown when no UPI ID is configured
+- **Status: FIXED** in `2d2c6ad` (failing test first, then the fix).
 - **Where:** `lib/screens/loans/loan_details_screen.dart:192-199`,
   `lib/screens/loans/payment_entry_screen.dart:177-181`.
 - **SPEC §3:** "Pay via UPI" button (only if UPI ID configured in Settings).
 - **Fix:** show the UPI button only when a UPI ID is set.
 
 ### A13 — LOW · RULE CHANGE — UPI "Confirm paid" can record status `partial`, SPEC says `paid`
+- **Status: NOT IMPLEMENTED — needs owner decision** (see below).
 - **Where:** `lib/services/loan_service.dart:257` (status comes from the amount).
 - **What:** a UPI payment smaller than the daily amount is stored as `partial` (ledger-correct),
   while SPEC §3 says "records a loan_payment row with status=paid, note=UPI".
 - **Recommendation:** keep the ledger-correct status and reword SPEC §3.
 
 ### A14 — LOW · RULE CHANGE — Chit duration is not tied to the number of members
+- **Status: NOT IMPLEMENTED — needs owner decision** (see below).
 - **Where:** `lib/services/chit_service.dart` `_validate`.
 - **What:** a 20-member chit can be created for 10 months (10 members never win) or 30 months
   (auctions run out after month 20).
 - **Recommendation:** warn (not block) when duration ≠ members.
 
 ### A15 — LOW · RULE CHANGE — A fine cannot be collected on its own
+- **Status: NOT IMPLEMENTED — needs owner decision** (see below).
 - **Where:** `lib/services/loan_service.dart:214, 227`.
 - **What:** a fine is only stored together with a payment of more than ₹0 and at most the
   outstanding balance, so a fine owed after the last instalment can't be recorded.
 - **Recommendation:** allow a fine-only entry (amount 0, fine > 0).
 
 ### A16 — LOW · RULE CHANGE — "Total lent" is the total payable (includes interest)
+- **Status: NOT IMPLEMENTED — needs owner decision** (see below).
 - **Where:** `lib/services/report_service.dart:241`; schema has no principal column.
 - **Recommendation:** keep the "Total lent (payable)" label, or add a principal field (schema v3).
 
 ---
+
+## Needs owner decision
+
+These would change how the business works, so they were **not** implemented.
+
+| # | Sev | Decision needed | Recommendation |
+|---|---|---|---|
+| A3 | HIGH | How to correct a wrongly entered payment. | Add an append-only **reversal** entry (negative amount, mandatory note, linked to the original row) in a schema v3 migration, and amend SPEC rule 4 to allow it. Until then: export a backup before risky edits and double-check amounts before saving. |
+| A7 | MEDIUM | What happens to a contribution ticked "paid" before that month's auction. | Block "mark paid" for a month until its auction is recorded (simplest, no credits to track). |
+| A8 | MEDIUM | Whether money saved as a single entry ("apply extra" switched off) should move the schedule forward. | Keep as is — the switch says "saved as a single entry"; or remove the switch entirely. |
+| A13 | LOW | UPI "Confirm paid" stores `partial` when less than the day's amount; SPEC said `paid`. | Keep the ledger-correct status (SPEC §3 now describes it). |
+| A14 | LOW | Should chit duration have to equal the number of members? | Show a warning (not a block) when they differ. |
+| A15 | LOW | Collecting a fine on its own (e.g. after the last instalment). | Allow a fine-only entry (amount ₹0, fine > ₹0). |
+| A16 | LOW | "Total lent" uses total payable (interest included). | Keep the "(payable)" label; add a principal field only if you want profit reports. |
+
+## Unresolved
+None — every BUG finding was fixed on the first attempt.
+
+## Not verifiable without a phone
+- Fingerprint prompt (`local_auth`), launching a real UPI app, and the Android file picker.
+- Possible issue to check: backups are written to `Android/data/<package>/files/backups`;
+  on Android 11+ some file pickers can't browse `Android/data`, which would make *Restore*
+  unable to find the file without copying it elsewhere first. Step 12 of the phone test in
+  FINAL_REPORT.md checks this.
 
 ## Chit rule check (source of truth #3)
 **Implemented.** Per-chit `commission_mode`, default `from_winner` = "members pay auctioned
