@@ -19,6 +19,7 @@ import 'package:loan_chit_manager/screens/dashboard/dashboard_screen.dart';
 import 'package:loan_chit_manager/screens/loans/loan_details_screen.dart';
 import 'package:loan_chit_manager/screens/loans/loan_form_screen.dart';
 import 'package:loan_chit_manager/screens/loans/loan_list_screen.dart';
+import 'package:loan_chit_manager/screens/loans/loan_setup_screen.dart';
 import 'package:loan_chit_manager/screens/loans/payment_entry_screen.dart';
 import 'package:loan_chit_manager/screens/reports/reports_screen.dart';
 import 'package:loan_chit_manager/screens/settings/settings_screen.dart';
@@ -26,6 +27,7 @@ import 'package:loan_chit_manager/services/auth_service.dart';
 import 'package:loan_chit_manager/services/borrower_service.dart';
 import 'package:loan_chit_manager/services/chit_service.dart';
 import 'package:loan_chit_manager/services/loan_service.dart';
+import 'package:loan_chit_manager/models/models.dart';
 
 import 'test_db.dart';
 
@@ -64,6 +66,16 @@ void main() {
     await c.recordAuction(chitId: ch, monthNumber: 1, winnerMemberId: m, winningAmount: 8000000,
         auctionDate: todayKey());
     await c.ensureContributions(ch, 1);
+    // The month-1 winner is now waiting for loan setup (Loans + dashboard banner).
+    ids['auction'] = (await c.auctions(ch)).single.id!;
+    // A monthly loan that is two instalments overdue, with late interest.
+    final mb = await BorrowerService().create(name: 'Monthly borrower with a long name');
+    final ml = await LoanService().createLoan(
+        borrowerId: mb, loanName: 'Chit prize repayment over twelve months',
+        totalPayable: 1234567.89, dailyPayment: 102880.66, durationDays: 12,
+        startDate: dateKey(addMonthsClamped(DateTime.now(), -2)),
+        repaymentType: RepaymentType.monthly, lateInterestPercent: 2.5, graceDays: 15);
+    ids['monthlyLoan'] = ml;
   }
 
   Future<void> show(WidgetTester tester, Widget screen) async {
@@ -85,6 +97,9 @@ void main() {
     'loanForm': () => const LoanFormScreen(),
     'loanDetails': () => LoanDetailsScreen(loanId: ids['loan'] ?? 1),
     'paymentEntry': () => PaymentEntryScreen(loanId: ids['loan'] ?? 1),
+    'monthlyLoanDetails': () => LoanDetailsScreen(loanId: ids['monthlyLoan'] ?? 1),
+    'monthlyPaymentEntry': () => PaymentEntryScreen(loanId: ids['monthlyLoan'] ?? 1),
+    'loanSetup': () => LoanSetupScreen(auctionId: ids['auction'] ?? 1),
     'chits': () => const ChitListScreen(),
     'chitForm': () => const ChitFormScreen(),
     'chitDetails': () => ChitDetailsScreen(chitId: ids['chit'] ?? 1),
@@ -101,7 +116,8 @@ void main() {
   for (final empty in [false, true]) {
     for (final e in screens.entries) {
       if (empty && {'borrowerProfile', 'loanDetails', 'paymentEntry', 'chitDetails',
-          'chitDetailsNoValue', 'auctionEntry', 'auctionNoValue', 'memberForm'}.contains(e.key)) {
+          'chitDetailsNoValue', 'auctionEntry', 'auctionNoValue', 'memberForm',
+          'monthlyLoanDetails', 'monthlyPaymentEntry', 'loanSetup'}.contains(e.key)) {
         continue;
       }
       testWidgets('${empty ? 'empty' : 'seeded'} ${e.key} at 360 dp, 1.3x text', (tester) async {

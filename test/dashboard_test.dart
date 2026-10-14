@@ -39,6 +39,9 @@ void main() {
         () async => (await AppDatabase.instance.database).query('loan_payments'));
     expect(rows, hasLength(1));
     expect(rows!.single['amount_paid'], 300);
+    // The refresh after saving must not fail (it used to trip a debug assertion).
+    expect(find.textContaining('Something went wrong'), findsNothing);
+    expect(find.text('Recorded ₹300.00 from Ravi'), findsOneWidget);
     await tester.runAsync(() => AppDatabase.instance.close());
   });
 
