@@ -63,6 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _run(Future<void> Function() action) async {
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
       await action();
@@ -113,7 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         message: 'Tip: export a backup of the current data first if you might need it.',
         confirmLabel: 'Replace my data',
         destructive: true);
-    if (!second) return;
+    if (!second || !mounted) return;
     setState(() => _busy = true);
     try {
       await _backup.restoreFromFile(path);
@@ -322,6 +323,7 @@ class _PasswordDialogState extends State<_PasswordDialog> {
       await AuthService().changePassword(_current.text, _next.text);
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _busy = false;
         _error = errorText(e);

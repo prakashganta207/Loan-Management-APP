@@ -122,6 +122,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
     if (!second) return;
     await _auth.resetAuth();
+    if (!mounted) return;
     setState(() => _loading = true);
     await _load();
   }

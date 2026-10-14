@@ -105,7 +105,7 @@ class _AuctionEntryScreenState extends State<AuctionEntryScreen> {
         message: '${winner.memberName} receives ${money(_preview?.winnerPayout ?? 0)}. '
             'They cannot win again in this chit, and this month is locked once saved.',
         confirmLabel: 'Save auction');
-    if (!ok) return;
+    if (!ok || !mounted) return;
     setState(() => _saving = true);
     try {
       await _service.recordAuction(

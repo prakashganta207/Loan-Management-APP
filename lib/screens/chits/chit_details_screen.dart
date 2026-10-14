@@ -246,7 +246,7 @@ class _ContributionsTabState extends State<_ContributionsTab> {
   Future<void> _toggle(ChitContribution c, bool paid) async {
     try {
       await _service.setContributionPaid(c.id!, paid);
-      _reload();
+      if (mounted) _reload();
     } catch (e) {
       if (mounted) showMessage(context, errorText(e), error: true);
     }
