@@ -225,6 +225,7 @@ class LoanService {
       if (loan.status != RecordStatus.active) {
         throw const ValidationException('Payments can only be recorded on active loans');
       }
+      _checkNotBeforeStart(loan, slotDate);
       final existing = await _payments(txn, loanId);
       final s = computeSummary(loan, existing, DateTime.now());
       if (amount > s.outstanding + kEps) {
@@ -290,6 +291,7 @@ class LoanService {
       if (loan.status != RecordStatus.active) {
         throw const ValidationException('Only active loans can be marked missed');
       }
+      _checkNotBeforeStart(loan, slotDate);
       final existing = await _payments(txn, loanId);
       final paid = existing
           .where((p) => p.paymentDate == slotDate)
@@ -331,6 +333,13 @@ class LoanService {
       await txn.update('loans', {'status': newStatus, 'updated_at': nowStamp()},
           where: 'id = ?', whereArgs: [loanId]);
     });
+  }
+
+  static void _checkNotBeforeStart(Loan loan, String slotDate) {
+    if (parseDate(slotDate).isBefore(parseDate(loan.startDate))) {
+      throw ValidationException(
+          'This loan starts on ${prettyDate(loan.startDate)}. Choose that day or later.');
+    }
   }
 
   static void _checkDate(String s) {

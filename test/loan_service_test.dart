@@ -118,6 +118,16 @@ void main() {
     expect(s.coveredDays, 4); // 300 + 300 + 300 + 100
   });
 
+  test('AUDIT A10: payments and missed days before the loan starts are rejected', () async {
+    // The loan in setUp starts on 2026-01-01.
+    await expectLater(
+        () => loans.recordPayment(loanId: loanId, slotDate: '2025-12-31', amount: 300),
+        throwsA(isA<ValidationException>()));
+    await expectLater(() => loans.markMissed(loanId: loanId, slotDate: '2025-12-31'),
+        throwsA(isA<ValidationException>()));
+    expect(await loans.payments(loanId), isEmpty);
+  });
+
   test('suggested fine counts late days', () async {
     final loan = await loans.getLoan(loanId);
     expect(LoanService.suggestedFine(loan, '2026-01-01', DateTime(2026, 1, 4)), 30);
