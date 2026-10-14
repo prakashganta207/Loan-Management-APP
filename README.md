@@ -1,8 +1,8 @@
-# Loan & Chit Manager (v1.0.0)
+# Loan & Chit Manager (v1.1.0)
 
-Offline Flutter app for a small lender: daily-collection loans with an auditable
-ledger, chit funds with auctions and contributions, reports, local backup and a
-UPI deep-link payment trigger. Built against the frozen spec in `SPEC.md`.
+Offline Flutter app for a small lender: daily and monthly loans with an auditable
+ledger, chit funds with auctions and contributions (each auction winner can become a
+loan in one step), reports, local backup and a UPI deep-link payment trigger. Built against the frozen spec in `SPEC.md`.
 
 ## Setup (on your machine)
 
@@ -49,6 +49,8 @@ If the Android build complains about `minSdk`, set `minSdk = 23` in
 - [ ] Add borrower → add loan (₹30,000 total, ₹300/day) → record ₹900 → history shows 3 rows
 - [ ] Dashboard: tick "paid" and "missed" on today's schedule
 - [ ] Create chit, add members, record an auction → the winner disappears from the next auction's list
+- [ ] The winner appears in Loans → "Waiting for setup" (and a banner on Today) → set up a
+      monthly loan → it shows "₹X / month" and "From chit: …"
 - [ ] Settings → set UPI ID → Loan → Pay via UPI opens your UPI app
 - [ ] Settings → Export backup → Restore it
 
@@ -57,10 +59,12 @@ If the Android build complains about `minSdk`, set `minSdk = 23` in
 ```
 lib/
   core/        formatting, dates, theme, routes, ValidationException
-  data/        database.dart — schema v2 (+ v1→v2 migration), indexes, append-only ledger triggers
+  data/        database.dart — schema v3 (+ v1→v2→v3 migrations), indexes, append-only ledger triggers
   models/      plain data classes for every table
   services/    all business rules (screens never write SQL)
-    loan_service.dart      ledger, multi-day split, fines, status transitions
+    loan_service.dart      ledger, daily/monthly schedule, multi-instalment split, fines,
+                           late interest, status transitions
+    chit_loan_service.dart chit winners waiting for loan setup (one-transaction setup)
     chit_service.dart      members, auctions (transactional no-repeat-winner), contributions
     chit_calculator.dart   the single source of chit maths
     report_service.dart    dashboard, daily / monthly / overall reports
@@ -86,6 +90,15 @@ tool/          setup_android.dart
 - **No overpaying, no early dates.** A payment larger than the outstanding balance, or dated
   before the loan's start date, is rejected. All money is rounded to paise (`round2`).
 - **Fines** go on the first ledger row of a payment: late days × fine per day, editable.
+- **Monthly loans** use the same schedule and ledger rules with one instalment per month:
+  instalment *i* is due on start + *i* months, clamped to the month's end and always counted
+  from the start date (31 Jan → 28/29 Feb → 31 Mar → 30 Apr). Paying 3 months at once makes
+  3 ledger rows. `daily_payment` / `duration_days` hold the monthly instalment / number of
+  months (read through `Loan.installmentAmount` / `installmentCount`).
+- **Late interest (monthly)** = unpaid part of the overdue instalment × rate % ÷ 100 ×
+  max(0, days late − grace days) ÷ 30, rounded to paise. Simple interest on that instalment
+  only — never on the whole loan, never compounding. Pre-filled and editable, stored as the
+  payment's fine, and shown as "late interest due so far" on Loan Details.
 - **Loan status** only moves active → completed (when outstanding is zero) → archived.
 - **No repeat chit winners.** Checked and set inside one transaction, plus a unique
   `(chit, month)` constraint on auctions.
@@ -100,6 +113,10 @@ tool/          setup_android.dart
     pays chit value ÷ members − dividend, and the winner receives the full winning amount.
   Chits created before schema v2 stay on `from_dividend` so recorded auctions remain correct.
 - **Chit terms lock** (value, members, commission %, commission mode) after the first auction.
+- **Chit winner → loan.** Every saved auction becomes a "Waiting for setup" item (auctions
+  from before v1.1.0 too). Setting up the loan and marking the auction "Loan created" happen
+  in one transaction, and the database allows only one loan per auction, so a double tap
+  can't create two loans. "Not a loan" dismisses an item; it can be restored.
 - **Contributions** start at chit value ÷ members; recording the month's auction re-prices the
   rows still pending to the calculator's "each member pays" amount.
 - **Restore is all-or-nothing.** It runs in one transaction, keeps the login, re-creates the

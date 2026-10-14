@@ -2,7 +2,7 @@
 
 This freezes the database schema and screen-by-screen UX before implementation, per the blueprint's recommendation. Any schema change after this point should be made via a migration, not a silent edit.
 
-**App version: 1.0.0. Current schema version: 2.** v1 → v2 added `chit_groups.commission_mode` and `chit_auctions.winner_payout` (see §1a). This document describes what the v1.0.0 code does; open questions are listed in `AUDIT.md` under "Needs owner decision".
+**App version: 1.1.0. Current schema version: 3.** v1 → v2 added `chit_groups.commission_mode` and `chit_auctions.winner_payout` (see §1a); v2 → v3 added monthly loans and the chit-winner loan setup (see "Schema migrations"). This document describes what the v1.1.0 code does; open questions are listed in `AUDIT.md` under "Needs owner decision".
 
 ---
 
@@ -39,10 +39,14 @@ All tables use `id INTEGER PRIMARY KEY AUTOINCREMENT`. Dates stored as ISO-8601 
 | borrower_id | INTEGER FK -> borrowers.id | ON DELETE RESTRICT |
 | loan_name | TEXT NOT NULL | e.g. "Shop Loan" |
 | total_payable | REAL NOT NULL | |
-| daily_payment | REAL NOT NULL | lender-chosen, not forced to total/100 |
-| duration_days | INTEGER NOT NULL | |
-| fine_per_day | REAL NOT NULL DEFAULT 0 | configurable, not hardcoded |
-| start_date | TEXT NOT NULL | |
+| daily_payment | REAL NOT NULL | **the instalment**: per day for daily loans, **per month for monthly loans** (name kept: older Android SQLite can't rename columns). Code reads it as `Loan.installmentAmount`. |
+| duration_days | INTEGER NOT NULL | **number of instalments**: days for daily loans, **months for monthly loans**. Code reads it as `Loan.installmentCount`. |
+| fine_per_day | REAL NOT NULL DEFAULT 0 | daily loans only (0 for monthly) |
+| repayment_type | TEXT NOT NULL DEFAULT 'daily' | v3. 'daily' \| 'monthly' (CHECK). `Loan.isMonthly`. |
+| late_interest_percent | REAL NOT NULL DEFAULT 0 | v3. Monthly loans: simple interest % per month on an overdue instalment. |
+| grace_days | INTEGER NOT NULL DEFAULT 0 | v3. Monthly loans: days after a due date before late interest starts. |
+| source_chit_auction_id | INTEGER NULL | v3. Set when the loan was created for a chit auction winner. Unique when not null (partial index), no FK (restore inserts loans before chits). |
+| start_date | TEXT NOT NULL | daily: first collection day; monthly: **first due date** |
 | status | TEXT | 'active' \| 'completed' \| 'archived' |
 | created_at | TEXT | |
 | updated_at | TEXT | |
@@ -50,18 +54,26 @@ All tables use `id INTEGER PRIMARY KEY AUTOINCREMENT`. Dates stored as ISO-8601 
 Derived (computed at read time from `loan_payments`, never trusted as stored truth): `total_paid`, `total_fine`, `outstanding_balance = total_payable - total_paid`.
 
 #### Loan schedule rules (`LoanService.computeSummary` / `recordPayment`)
-- **Schedule day *i*** (0-based from `start_date`) is due `min(daily_payment, total_payable − daily_payment × i)`, so the last instalment can be smaller (₹1,000 at ₹300/day → 300, 300, 300, 100).
-- **Days covered** = schedule days within `duration_days` whose payments add up to that day's due amount.
-- **Next due date** = the first schedule day not fully paid (the scan continues past `duration_days` for loans that run over); none once the loan is cleared.
-- **Days behind** = days from the next due date to today (0 if it is today or later).
-- **Payments left** = ⌈outstanding ÷ daily_payment⌉.
+One schedule, two instalment periods. Everything below applies to daily and monthly loans alike; "instalment" means a day's payment for daily loans and a month's for monthly loans.
+- **Instalment *i*** (0-based) is due on `slotDate(i)`:
+  - daily: `start_date + i days`;
+  - monthly: `start_date + i months`, the day clamped to the month's last day, **always computed from `start_date`** (never chained): 31 Jan → 28 Feb (29 in a leap year) → 31 Mar → 30 Apr.
+  - Monthly payments and missed marks are only accepted on an instalment due date.
+- Instalment *i* is due `min(instalment, total_payable − instalment × i)`, so the last instalment can be smaller (₹1,000 at ₹300/day → 300, 300, 300, 100).
+- **Days covered / instalments paid** = instalments within `installmentCount` whose payments add up to their due amount.
+- **Next due date** = the first instalment not fully paid (the scan continues past `installmentCount` for loans that run over); none once the loan is cleared.
+- **Days behind** = days from the next due date to today (0 if it is today or later). **Overdue instalments** = instalments due before today that are not fully paid (Loan Details shows "N instalments overdue · D days late" for monthly loans).
+- **Payments left** = ⌈outstanding ÷ instalment⌉.
 - **Recording money** (all amounts rounded to paise with `round2`):
   - amount must be > 0 and ≤ outstanding; fine ≥ 0; the schedule day must not be before `start_date`; only active loans accept payments.
-  - With the multi-day split (default), the amount fills the chosen schedule day first (topping up a partial day), then each following day: one ledger row per day, status `paid` when that day is complete or the loan is cleared, else `partial`.
+  - With the split (default), the amount fills the chosen instalment first (topping up a partial one), then each following instalment: one ledger row per instalment (₹900 at ₹300/day = 3 rows; 3 months at once = 3 rows), status `paid` when that instalment is complete or the loan is cleared, else `partial`.
   - With the split switched off, the whole amount is one row on the chosen day; the balance is right but the schedule (next due / days covered) does not move past that day.
-  - The fine goes on the first row only. Suggested fine = late days × `fine_per_day`, where late days = payment date − schedule day; the lender can edit it.
+  - The late charge goes in `fine_amount` on the first row only; the lender can edit the suggestion. Late days = payment date − instalment due date.
+    - **Daily — fine** = late days × `fine_per_day`.
+    - **Monthly — late interest** = `round2(unpaid part of that instalment × late_interest_percent / 100 × max(0, late days − grace_days) / 30)`. Simple interest on the overdue instalment only: never on the whole loan, never compounding. Example: ₹5,000 at 2%/month, 45 days late → ₹150.00; with 15 grace days → ₹100.00; on time → ₹0.
+  - **Accrued late interest** (monthly, Loan Details "Late interest due so far"): the same formula summed over every overdue instalment as of today. It is information only; it is charged when the late payment is recorded.
 - **Missed day**: a zero-amount `missed` row, at most once per schedule day, not allowed on a fully paid day or before `start_date`. It does not change the balance.
-- **Corrections**: there is no correction entry in v1.0.0 — a saved payment cannot be reversed (see AUDIT A3).
+- **Corrections**: there is no correction entry yet — a saved payment cannot be reversed (see AUDIT A3).
 
 ### loan_payments
 | column | type | notes |
@@ -118,6 +130,8 @@ A ₹900 payment against a ₹300/day loan creates **three** `loan_payments` row
 | dividend_pool | REAL | from_dividend: = discount - commission_amount; from_winner: = discount |
 | dividend_per_member | REAL | = dividend_pool / number_of_members |
 | winner_payout | REAL NULL | v2. What the winner receives: from_dividend = winning_amount; from_winner = winning_amount - commission_amount. Backfilled to winning_amount for pre-v2 rows. |
+| loan_setup_status | TEXT NOT NULL DEFAULT 'pending' | v3. 'pending' \| 'created' \| 'dismissed' (CHECK). Every saved auction starts 'pending' (a "Waiting for setup" item); auctions from before v3 are 'pending' too. |
+| loan_id | INTEGER NULL FK -> loans.id | v3. The loan set up for the winner. |
 | created_at | TEXT | |
 
 One row per `(chit_group_id, month_number)`, unique constraint.
@@ -140,7 +154,16 @@ With 0% commission both modes give the same split.
 
 ### Schema migrations
 - **v1 → v2:** `ALTER TABLE chit_groups ADD COLUMN commission_mode TEXT NOT NULL DEFAULT 'from_dividend' CHECK (...)`; `ALTER TABLE chit_auctions ADD COLUMN winner_payout REAL`; backfill `winner_payout = winning_amount`. Fresh installs create the v1 tables and then run the same migration, so new and upgraded databases are identical.
-- Backups record `schema_version`. Restore accepts v1 and v2 backups (missing columns take the defaults above) and rejects anything newer than the app's schema.
+- **v2 → v3:** `loans` gets `repayment_type` (DEFAULT 'daily'), `late_interest_percent`, `grace_days` (DEFAULT 0) and `source_chit_auction_id` (+ a unique partial index); `chit_auctions` gets `loan_setup_status` (DEFAULT 'pending') and `loan_id`. Existing loans become daily loans and existing auctions become waiting items. History is not edited.
+- Backups record `schema_version`. Restore accepts v1, v2 and v3 backups (missing columns take the defaults above) and rejects anything newer than the app's schema.
+
+### 1b. Chit winner → loan setup
+- Saving an auction makes the winner a **pending** item: Loans → "Waiting for setup" shows winner, chit, month and prize; the dashboard shows "N chit winners need loan setup".
+- **Setup** (Loan Setup screen) creates the loan and sets the auction to `created` with `loan_id` **in one transaction**; the auction must still be `pending` (checked by the update's WHERE clause, plus the unique index on `loans.source_chit_auction_id`), so a double tap or a second setup can never create two loans. If anything fails, nothing is saved (including a borrower created for the winner).
+- Defaults: repayment type Monthly; total payable = prize (`winner_payout`, else `winning_amount`), editable; first due date = auction date + 1 month (clamped); grace days 0; loan name "<chit> — month N prize".
+- **Borrower**: a non-archived borrower with the member's phone, or — when the member has no phone — the same name (case-insensitive) is pre-selected; otherwise a new borrower is created from the member's name and phone. Any existing borrower can be picked instead.
+- **Remaining chit instalments for this member** (info only) = months from the auction month to the end of the chit, minus that member's contributions already marked paid in those months.
+- **Not a loan** (with confirmation) sets the item to `dismissed`; the Loans screen's "Dismissed" filter lists them with **Restore** (back to `pending`).
 
 ### chit_contributions
 | column | type | notes |
@@ -190,7 +213,11 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 
 ### Dashboard
 - Header stat row: Today's Collection (expected vs collected), Pending Borrowers count, Active Loans count, Active Chits count.
-- "Today's Collection Schedule" list: every active loan that has started, except loans already cleared and loans paid ahead (next due date after today) with nothing collected today. Each row shows borrower, amount due (`min(daily_payment, outstanding + collected today)`), paid/missed buttons, and taps through to payment entry (long-press opens Loan Details).
+- Banner "N chit winners need loan setup" when any auction is waiting (opens Loans).
+- "Today's Collection Schedule" list: every active loan that has started, except loans already cleared and loans paid ahead (next due date after today) with nothing collected today — so a monthly loan appears only when an instalment is due today or overdue. Each row shows borrower, amount due, paid/missed buttons, and taps through to payment entry (long-press opens Loan Details).
+  - daily: due = `min(daily instalment, outstanding + collected today)`;
+  - monthly: due = unpaid part of the next due instalment + collected today (capped by outstanding); if today's money already covered it, due = collected today (shows as collected).
+  - The quick "paid" button records the still-due amount against the next due instalment.
 - Collected = loan money recorded today (`created_at` today, fines excluded); expected = sum of the rows' amounts due; pending borrowers = borrowers with a row that is neither collected nor marked missed today.
 - The quick paid/missed buttons ignore repeat taps while a save is running.
 - Quick action buttons: Loan Management, Chit Management, Chit Calculator, Reports.
@@ -206,21 +233,34 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 - Tabs/sections: Loans (list with status chips), Payment History (chronological), Fines total, Outstanding Balance (prominent).
 
 ### Loan List
-- Filter by status (Active/Completed/Archived), list shows borrower + loan name + outstanding + next due.
+- "Waiting for setup" section at the top (chit winners: name, chit, month, prize; tap → Loan Setup; ✕ → "Not a loan"), with a Waiting / Dismissed filter (Dismissed items have Restore).
+- Filter by status (Active/Completed/Archived), list shows borrower + loan name + "₹X / day" or "₹X / month" + outstanding + next due (+ days behind, or overdue instalments for monthly).
 
 ### Add Loan
-- Fields: Borrower (picker, or "new borrower" inline), Loan name, Total payable, Daily payment, Duration (days, auto-suggested from total/daily but editable), Fine/day, Start date, Status defaults Active.
+- Fields: Borrower (picker, or "new borrower" inline), Loan name, then the shared loan-terms widget: **Repayment type** (Daily / Monthly) first.
+  - Daily: Total payable, Daily payment, Duration (days, auto-suggested from total ÷ daily but editable), Fine/day, Start date.
+  - Monthly: Total payable, Number of months, Monthly instalment (auto-suggested as total ÷ months, editable), First due date (default one month from today), Late interest % per month, Grace days (default 0).
+- Status defaults Active.
+
+### Loan Setup (chit winner)
+- Header: winner, chit + month, auction date, prize received, remaining chit instalments for this member (info).
+- Borrower picker (matched borrower pre-selected, or "New borrower: <member>"), Loan name, then the same loan-terms widget (Monthly pre-selected, total = prize, first due = auction date + 1 month). Create loan → opens the new loan. "Not a loan" dismisses with confirmation.
 
 ### Loan Details
-- Summary card: total payable, paid so far, outstanding, fines, days behind, days covered, payments left, next due.
-- Actions: Record Payment, Mark Missed (next unpaid day up to today), Pay via UPI (only when a UPI ID is set), Mark Completed (when outstanding = 0), Archive (when completed). Payment history is a section on this screen.
+- Summary card: total payable, paid so far, outstanding, days behind, payments left, next due, plus:
+  - daily: fines collected, "₹X / day", fine per late day, start date, days covered;
+  - monthly: late interest collected, **late interest due so far** (accrued, unpaid), "₹X / month", late interest % and grace days, first due date, instalments paid, "N instalments overdue · D days late".
+- Chit-sourced loans show "From chit: <name>, month N", linking to the chit.
+- Actions: Record Payment, Mark Missed (next unpaid instalment up to today; monthly only when one is due), Pay via UPI (only when a UPI ID is set), Mark Completed (when outstanding = 0), Archive (when completed). Payment history is a section on this screen.
 
 ### Payment Entry
-- Prefilled amount `min(daily_payment, outstanding)`, editable; schedule day defaults to the first unpaid day (editable, not before the start date); fine auto-calculated from late days × fine_per_day but editable; Save. "Collect via UPI, then save" appears only when a UPI ID is set.
-- If amount paid > scheduled, offer to apply the excess to future scheduled days per the multi-day rule.
+- Daily: prefilled amount `min(daily instalment, outstanding)`; schedule day defaults to the first unpaid day (date picker, not before the start date); "Fine" = late days × fine_per_day.
+- Monthly: prefilled amount = unpaid part of the next due instalment; "Instalment this covers" picker listing unpaid instalments (number + due date); "Late interest" pre-filled with the late-interest formula on that instalment's unpaid part.
+- All editable; Save. "Collect via UPI, then save" appears only when a UPI ID is set.
+- If the amount is more than one instalment, offer to apply the excess to the following days / instalments per the multi-instalment rule.
 
 ### Payment History
-- Chronological list per loan: date, scheduled, paid, fine, status chip.
+- Chronological list per loan: date, scheduled, paid, fine ("Late interest" for monthly loans), status chip.
 
 ### Chit List
 - Filter by status, list shows chit name, value, members, current month/duration.
@@ -244,7 +284,7 @@ chit_groups (1) ── (N) chit_contributions ── chit_members
 - Grid/list per month: member name, amount, paid/pending toggle, payment date. The list is created at chit value ÷ members; recording that month's auction re-prices still-pending rows to the calculator's "each member pays" amount. Rows already ticked paid keep their amount (AUDIT A7, needs owner decision).
 
 ### Auction History
-- List of past auctions per chit: month, winner, winning amount, winner payout, dividend/member, commission.
+- List of past auctions per chit: month, winner, winning amount, winner payout, dividend/member, commission, and the loan status chip (Waiting / Loan created / Dismissed). Tap: Waiting → Loan Setup, Loan created → the loan.
 
 ### Chit Calculator (standalone, no persistence)
 - Inputs: Chit value, Number of members, Winning amount, Commission %, Commission paid by (same toggle as Create Chit).

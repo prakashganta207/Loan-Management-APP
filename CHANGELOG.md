@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.1.0 — 2026-10-15
+
+### New: chit winners become loans
+- When an auction is saved, the winner appears in **Loans → Waiting for setup** (name, chit,
+  month, prize) and the dashboard shows "N chit winners need loan setup". Auctions recorded
+  before this version appear there too.
+- **Loan Setup** screen: repayment type first (Daily or Monthly), total payable pre-filled
+  with the prize, borrower matched by phone (or name) or created from the chit member, and
+  the member's remaining chit instalments shown for reference.
+- "Not a loan" dismisses an item (with confirmation); the Dismissed filter restores it.
+- Loan Details shows "From chit: <name>, month N"; the chit's auction history shows
+  Waiting / Loan created / Dismissed and links to the loan.
+
+### New: monthly loans
+- The New loan form and Loan Setup share a Daily/Monthly choice. Monthly: number of months,
+  monthly instalment (suggested as total ÷ months), first due date, late interest % per
+  month and grace days.
+- Due dates step one month at a time from the first due date, clamped to the month's end
+  (31 Jan → 28/29 Feb → 31 Mar → 30 Apr).
+- Everything that worked for daily loans works for monthly ones: paying several
+  instalments at once (one ledger row each), partial top-ups, no overpaying, append-only
+  ledger, active → completed → archived, next due date, overdue count, reports.
+- Late interest = unpaid instalment × rate % × (days late − grace days) ÷ 30, simple
+  interest on the overdue instalment only. Pre-filled on payment entry; accrued interest is
+  shown on Loan Details.
+- The dashboard lists a monthly loan only when an instalment is due today or overdue.
+- Every screen shows "₹X / day" or "₹X / month" as appropriate.
+
+### Database
+- Schema v3 (migration from v2; history untouched). Backups from v1, v2 and v3 restore.
+
+### Fixed
+- Several screens refreshed with a `setState` callback that returned a Future, which trips
+  a Flutter debug assertion (debug builds showed "Something went wrong" after a quick
+  payment on the dashboard). Release builds were not affected.
+
 ## v1.0.0 — 2026-10-14
 
 First release. An offline Android app for a small lender; all data stays on the phone.

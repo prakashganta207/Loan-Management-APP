@@ -260,7 +260,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const ListTile(
               leading: Icon(Icons.info_outline),
               title: Text('Loan & Chit Manager'),
-              subtitle: Text('Version 1.0.0 · all data is stored only on this phone. '
+              subtitle: Text('Version 1.1.0 · all data is stored only on this phone. '
                   'UPI payments are confirmed manually; the app cannot verify them.'),
             ),
             const SizedBox(height: 24),
